@@ -70,7 +70,7 @@ class Router:
     server addresses across multiple processes using asyncio locks.
     """
 
-    def __init__(self, config, tokenizer, addresses: list[str]):
+    def __init__(self, config, tokenizer, addresses: list[str], lora_configs=None):
         # List of "ip:port" strings
         self.addresses = addresses
         self.tensor_parallel_size = config.actor_rollout_ref.rollout.get("tensor_model_parallel_size", 1)
@@ -88,6 +88,9 @@ class Router:
         self.eos_token_id = tokenizer.eos_token_id
         model_path = config.actor_rollout_ref.model.path
         self.model_name = "/".join(model_path.split("/")[-2:])
+
+        # Multi-agent LoRA configuration
+        self.lora_configs = lora_configs or {}
 
     async def get_address(self, application_id: str) -> str:
         """
@@ -125,6 +128,21 @@ class Router:
             top_p=self.config.actor_rollout_ref.rollout.top_p,
             logprobs=1,
         )
+
+        # Handle multi-agent LoRA routing
+        agent_role = sampling_params.get("agent_role")
+        if agent_role and agent_role in self.lora_configs:
+            lora_config = self.lora_configs[agent_role]
+            # Build LoRA request for vLLM
+            kwargs["extra_body"] = {
+                "lora_request": {
+                    "lora_name": agent_role,
+                    "lora_int_id": lora_config.get("lora_int_id", 1),
+                    "lora_path": lora_config.get("lora_path")
+                }
+            }
+            # Remove agent_role from sampling_params to avoid passing it to vLLM
+            sampling_params = {k: v for k, v in sampling_params.items() if k != "agent_role"}
 
         do_sample = batch.meta_info.get("do_sample", True)
         is_validate = batch.meta_info.get("validate", False)

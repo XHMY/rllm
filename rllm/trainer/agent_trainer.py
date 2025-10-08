@@ -50,6 +50,9 @@ class AgentTrainer:
 
     def train(self):
         if not ray.is_initialized():
-            ray.init(runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN"}})
+            ray.init(include_dashboard=True, runtime_env={"env_vars": {
+                "TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN",
+                "RAY_DEBUG": "1", "RAY_DEBUG_POST_MORTEM": "1"
+            }})
 
         ray.get(train_agent.remote(self.config, self.agent_class, self.env_class, self.agent_args, self.env_args))

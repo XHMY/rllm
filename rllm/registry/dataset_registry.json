@@ -1,0 +1,10 @@
+{
+  "frozenlake": {
+    "train": "/nfs/hpc/share/zengyif/workspace/rllm/rllm/data/datasets/frozenlake/train.parquet",
+    "test": "/nfs/hpc/share/zengyif/workspace/rllm/rllm/data/datasets/frozenlake/test.parquet"
+  },
+  "deepmath": {
+    "train": "/nfs/hpc/share/zengyif/workspace/rllm/rllm/data/datasets/deepmath/train.parquet",
+    "test": "/nfs/hpc/share/zengyif/workspace/rllm/rllm/data/datasets/deepmath/test.parquet"
+  }
+}

@@ -45,12 +45,22 @@ class AgentPPOTrainer(RayPPOTrainer):
         agent_class=None,
         env_args=None,
         agent_args=None,
+        multi_agent_config=None,
     ):
         super().__init__(config=config, tokenizer=tokenizer, role_worker_mapping=role_worker_mapping, resource_pool_manager=resource_pool_manager, ray_worker_group_cls=ray_worker_group_cls, reward_fn=reward_fn, val_reward_fn=val_reward_fn)
         self.env_class = env_class
         self.agent_class = agent_class
         self.env_args = env_args or {}
         self.agent_args = agent_args or {}
+
+        # Multi-agent configuration
+        self.multi_agent_config = multi_agent_config
+        self.is_multi_agent = multi_agent_config is not None and multi_agent_config.get("enabled", False)
+        self.lora_configs = multi_agent_config.get("lora_configs", {}) if self.is_multi_agent else {}
+        self.agent_roles = multi_agent_config.get("agent_roles", []) if self.is_multi_agent else []
+
+        if self.is_multi_agent:
+            print(f"Multi-agent mode enabled with {len(self.agent_roles)} roles: {self.agent_roles}")
 
         if self.config.agent.use_stepwise_advantage:
             print("Using step-level advantage, max_prompt_length and max_response_length will be applied step-wise")
@@ -88,6 +98,7 @@ class AgentPPOTrainer(RayPPOTrainer):
             enforce_max_prompt_length=self.config.agent.use_stepwise_advantage,
             trajectory_timeout=self.config.agent.trajectory_timeout,
             overlong_filter=self.config.agent.overlong_filter,
+            lora_configs=self.lora_configs if self.is_multi_agent else None,
             **self.config.agent.get("engine_args", {}),
         )
 
@@ -125,6 +136,97 @@ class AgentPPOTrainer(RayPPOTrainer):
                 agents[idx] = agent
         self.agent_execution_engine.update_envs_and_agents(envs, agents)
         return envs
+
+    def _separate_by_agent_role(self, batch: DataProto) -> dict[str, DataProto]:
+        """
+        Separate batch by agent_role for multi-agent training.
+
+        Extracts agent_role from trajectory steps and groups data by role.
+
+        Args:
+            batch: Combined batch containing data from all agent roles
+
+        Returns:
+            Dictionary mapping agent_role to role-specific DataProto batch
+        """
+        import torch
+        from verl import DataProto
+
+        # Extract agent roles from trajectory metadata
+        # Assuming batch has trajectory_data with steps containing agent_role
+        role_indices = {role: [] for role in self.agent_roles}
+
+        batch_size = len(batch.batch)
+        for idx in range(batch_size):
+            # Get agent_role from batch metadata
+            # This should be stored during trajectory generation
+            agent_role = batch.non_tensor_batch.get("agent_role", np.array([None] * batch_size))[idx]
+
+            if agent_role and agent_role in role_indices:
+                role_indices[agent_role].append(idx)
+
+        # Create separate batches for each role
+        role_batches = {}
+        for role, indices in role_indices.items():
+            if len(indices) == 0:
+                continue
+
+            # Select data for this role
+            role_batch_dict = {}
+            for key, value in batch.batch.items():
+                if isinstance(value, torch.Tensor):
+                    role_batch_dict[key] = value[indices]
+                elif isinstance(value, np.ndarray):
+                    role_batch_dict[key] = value[indices]
+                else:
+                    role_batch_dict[key] = [value[i] for i in indices]
+
+            role_non_tensor = {}
+            for key, value in batch.non_tensor_batch.items():
+                if isinstance(value, np.ndarray):
+                    role_non_tensor[key] = value[indices]
+                else:
+                    role_non_tensor[key] = [value[i] for i in indices]
+
+            role_batches[role] = DataProto(batch=role_batch_dict, non_tensor_batch=role_non_tensor)
+
+        return role_batches
+
+    def _update_multi_agent_policies(self, batch: DataProto, actor_rollout_wg):
+        """
+        Update each agent's policy sequentially using LoRA adapters.
+
+        Args:
+            batch: Combined batch containing all agent data
+            actor_rollout_wg: Actor rollout worker group
+        """
+        # Separate trajectories by agent role
+        role_batches = self._separate_by_agent_role(batch)
+
+        print(f"Separated batch into {len(role_batches)} role-specific batches:")
+        for role, role_batch in role_batches.items():
+            print(f"  {role}: {len(role_batch.batch)} samples")
+
+        # Update each policy sequentially
+        for agent_role in self.agent_roles:
+            if agent_role not in role_batches:
+                print(f"No data for agent role {agent_role}, skipping update")
+                continue
+
+            role_batch = role_batches[agent_role]
+            lora_config = self.lora_configs.get(agent_role, {})
+
+            print(f"Updating policy for agent role: {agent_role}")
+
+            # Switch active LoRA adapter
+            # This will be implemented in the worker
+            actor_rollout_wg.set_active_lora.remote(agent_role, lora_config)
+
+            # Update this agent's policy with its data
+            # Note: update_actor should only update the active LoRA
+            actor_rollout_wg.update_actor.remote(role_batch)
+
+            print(f"Finished updating {agent_role}")
 
     def fit_agent(self):
         """

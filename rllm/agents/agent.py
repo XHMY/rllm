@@ -18,6 +18,11 @@ class Step:
     done: bool = False
     mc_return: float = 0.0
 
+    # Multi-agent metadata
+    agent_id: str = None
+    agent_role: str = None
+    lora_adapter: str = None
+
 
 @dataclass
 class Action:

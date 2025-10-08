@@ -52,6 +52,7 @@ class AgentExecutionEngine:
         max_workers=64,
         enforce_max_prompt_length=False,  # If enabled, applies max_prompt check per step
         overlong_filter=False,  # Filter for overlong trajectories (i.e. TRUNCATION, MAX_STEPS, TIMEOUT)
+        lora_configs=None,  # Multi-agent LoRA configs
         **kwargs,
     ):
         if agent_args is None:
@@ -67,6 +68,7 @@ class AgentExecutionEngine:
         self.engine_name = engine_name
         self.n_parallel_agents = n_parallel_agents
         self.overlong_filter = overlong_filter
+        self.lora_configs = lora_configs or {}
 
         # For interaction
         self.gamma = gamma
@@ -105,7 +107,12 @@ class AgentExecutionEngine:
         elif self.engine_name == "verl":
             # All generation is done via scheduler. Currently only works for verl
             self.server_addresses = getattr(self.rollout_engine, "server_addresses", [])
-            self.router = Router(config=self.config, tokenizer=self.tokenizer, addresses=self.server_addresses)
+            self.router = Router(
+                config=self.config,
+                tokenizer=self.tokenizer,
+                addresses=self.server_addresses,
+                lora_configs=self.lora_configs
+            )
 
         # Create a thread pool executor for environment interactions (i.e. step, reset, close)
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
@@ -287,6 +294,11 @@ class AgentExecutionEngine:
                     break
 
             kwargs["max_tokens"] = max_tokens
+
+            # Extract agent_role for multi-agent LoRA routing
+            agent_role = getattr(agent, "agent_role", None)
+            if agent_role:
+                kwargs["agent_role"] = agent_role
 
             start_time = time.time()
             response = await self.get_model_response(prompt_messages, application_id, **kwargs)

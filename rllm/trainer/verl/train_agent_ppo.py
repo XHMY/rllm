@@ -94,6 +94,18 @@ def train_agent(config, agent_class=None, env_class=None, agent_args=None, env_a
     if config.agent.get("agent_args") is not None:
         agent_args.update(config.agent.get("agent_args"))
 
+    # Parse multi-agent configuration if enabled
+    multi_agent_config = None
+    if config.get("multi_agent") and config.multi_agent.get("enabled", False):
+        print("Multi-agent training enabled")
+        multi_agent_config = {
+            "enabled": True,
+            "num_agents": config.multi_agent.get("num_agents", 2),
+            "agent_roles": config.multi_agent.get("agent_roles", []),
+            "lora_configs": OmegaConf.to_container(config.multi_agent.get("lora_configs", {}), resolve=True)
+        }
+        print(f"Multi-agent config: {multi_agent_config}")
+
     trainer = AgentPPOTrainer(
         config=config,
         tokenizer=tokenizer,
@@ -106,6 +118,7 @@ def train_agent(config, agent_class=None, env_class=None, agent_args=None, env_a
         agent_class=agent_class,
         env_args=env_args,
         agent_args=agent_args,
+        multi_agent_config=multi_agent_config,
     )
 
     trainer.init_workers()

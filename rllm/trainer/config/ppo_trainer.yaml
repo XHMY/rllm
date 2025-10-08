@@ -301,6 +301,37 @@ agent:
   overlong_filter: False
   normalize_step_advantage: False
   use_stepwise_advantage: False
-  stepwise_advantage_mode: "broadcast" 
+  stepwise_advantage_mode: "broadcast"
   agent_args: {}
   engine_args: {}
+
+# Multi-Agent Configuration
+multi_agent:
+  enabled: false  # Set to true to enable multi-agent training
+  num_agents: 3
+  agent_roles: ["generator_initial", "evaluator_critique", "generator_refinement"]
+
+  lora_configs:
+    generator_initial:
+      lora_path: null  # Path to pretrained LoRA (or null to train from scratch)
+      lora_int_id: 1
+      lora_rank: 64
+      lora_alpha: 16
+      target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+      lora_dropout: 0.05
+
+    evaluator_critique:
+      lora_path: null
+      lora_int_id: 2
+      lora_rank: 64
+      lora_alpha: 16
+      target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+      lora_dropout: 0.05
+
+    generator_refinement:
+      lora_path: null
+      lora_int_id: 3
+      lora_rank: 64
+      lora_alpha: 16
+      target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+      lora_dropout: 0.05
