@@ -13,6 +13,7 @@ allowing each agent to see the complete context of previous interactions.
 from typing import Any, Dict, Tuple
 
 from rllm.environments.base.base_env import BaseEnv
+from rllm.rewards.math_reward import extract_boxed_answer
 
 
 class MultiAgentMathEnv(BaseEnv):
@@ -118,14 +119,23 @@ class MultiAgentMathEnv(BaseEnv):
         """Handle generator_initial agent's action."""
         # Generator proposed initial solution
         self.last_solution = action
-        reward = 0.0  # No immediate reward for generating
+
+        # Assign reward based on correctness to provide variance for GRPO
+        is_correct = self._check_correctness(action)
+        reward = 1.0 if is_correct else -0.2
+
         self.current_role = "evaluator_critique"
 
         obs = {
             "question": self.question,
             "conversation_history": self.conversation_history.copy()
         }
-        info = {"agent_role": "evaluator_critique"}
+        # Add metadata for rejection sampling
+        info = {
+            "agent_role": "evaluator_critique",
+            "generator_solution": action,
+            "is_solution_correct": is_correct,
+        }
         done = False
 
         return obs, reward, done, info
@@ -153,21 +163,25 @@ class MultiAgentMathEnv(BaseEnv):
             # Solution is wrong
             if verdict == "Incorrect":
                 reward = 0.2  # Good: evaluator correctly identified error
-            else:
-                reward = 0.0  # Bad: evaluator said correct when it's wrong
 
-            # Check if we should continue
-            done = self.current_step >= self.max_steps
+                # Check if we should continue to refinement
+                done = self.current_step >= self.max_steps
 
-            if not done:
-                # Move to refinement phase
-                self.current_role = "generator_refinement"
-                obs = {
-                    "question": self.question,
-                    "conversation_history": self.conversation_history.copy()
-                }
-                info = {"agent_role": "generator_refinement"}
+                if not done:
+                    # Move to refinement phase
+                    self.current_role = "generator_refinement"
+                    obs = {
+                        "question": self.question,
+                        "conversation_history": self.conversation_history.copy()
+                    }
+                    info = {"agent_role": "generator_refinement"}
+                else:
+                    obs = None
+                    info = {}
             else:
+                # Evaluator said "Correct" when it's actually wrong
+                reward = 0.0  # Bad: evaluator gave wrong verdict
+                done = True  # Stop when evaluator says "Correct"
                 obs = None
                 info = {}
 
@@ -176,15 +190,31 @@ class MultiAgentMathEnv(BaseEnv):
     def _handle_generator_refinement(self, action: str) -> Tuple[Any, float, bool, Dict]:
         """Handle generator_refinement agent's action."""
         # Generator refined solution
+        previous_solution = self.last_solution
         self.last_solution = action
-        reward = 0.0  # No immediate reward for generating refinement
+
+        # Assign reward based on correctness AND change to provide variance for GRPO
+        is_correct = self._check_correctness(action)
+        solution_changed = self._check_solution_changed(action, previous_solution)
+
+        # Reward: +1.0 if (correct AND changed), -0.2 otherwise
+        reward = 1.0 if (is_correct and solution_changed) else -0.2
+
         self.current_role = "evaluator_critique"
 
         obs = {
             "question": self.question,
             "conversation_history": self.conversation_history.copy()
         }
-        info = {"agent_role": "evaluator_critique"}
+
+        # Add metadata for rejection sampling
+        info = {
+            "agent_role": "evaluator_critique",
+            "generator_solution": action,
+            "previous_solution": previous_solution,
+            "is_solution_correct": is_correct,
+            "solution_changed": solution_changed,
+        }
         done = False
 
         return obs, reward, done, info
@@ -218,22 +248,41 @@ class MultiAgentMathEnv(BaseEnv):
         if solution is None:
             return False
 
+        predicted = extract_boxed_answer(solution)
+        if predicted is None:
+            return False
+
+        # Normalize both answers
+        predicted = str(predicted).strip()
+        ground_truth = str(self.ground_truth).strip()
+
+        return predicted == ground_truth
+
+    def _check_solution_changed(self, new_solution: str, old_solution: str) -> bool:
+        """
+        Check if the extracted answer changed between solutions.
+
+        Args:
+            new_solution: New solution text
+            old_solution: Previous solution text
+
+        Returns:
+            True if answers are different, False if same
+        """
         try:
-            # Import math reward function for answer extraction
             from rllm.rewards.math_reward import extract_boxed_answer
 
-            predicted = extract_boxed_answer(solution)
-            if predicted is None:
-                return False
+            new_ans = extract_boxed_answer(new_solution)
+            old_ans = extract_boxed_answer(old_solution)
 
-            # Normalize both answers
-            predicted = str(predicted).strip()
-            ground_truth = str(self.ground_truth).strip()
+            # If we can't extract either answer, consider it changed
+            if new_ans is None or old_ans is None:
+                return True
 
-            return predicted == ground_truth
-        except Exception as e:
-            # If extraction fails, solution is likely incorrect
-            return False
+            return str(new_ans).strip() != str(old_ans).strip()
+        except Exception:
+            # If extraction fails, assume changed
+            return True
 
     @staticmethod
     def from_dict(info: Dict[str, Any]) -> "MultiAgentMathEnv":

@@ -22,10 +22,11 @@ python3 -m examples.math_reasoning.train_multi_agent_math \
     data.train_batch_size=128 \
     data.val_batch_size=128 \
     data.max_prompt_length=1024 \
-    data.max_response_length=4096 \
+    data.max_response_length=6144 \
     actor_rollout_ref.actor.ppo_mini_batch_size=32 \
-    actor_rollout_ref.actor.use_dynamic_bsz=True \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=5120 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.use_dynamic_bsz=False \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=8192 \
     actor_rollout_ref.model.path=Qwen/Qwen2.5-Math-1.5B-Instruct \
     actor_rollout_ref.hybrid_engine=true \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
@@ -42,8 +43,12 @@ python3 -m examples.math_reasoning.train_multi_agent_math \
     trainer.project_name=multi_agent_math \
     trainer.experiment_name=deepmath_3agents_qwen \
     trainer.logger=['console','wandb'] \
+    trainer.agent_level_rejection_sampling=True \
+    trainer.negative_sample_ratio=0.3 \
     agent.max_steps=6 \
     agent.trajectory_timeout=300 \
+    agent.use_stepwise_advantage=True \
+    agent.stepwise_advantage_mode=mc_return \
     algorithm.adv_estimator=grpo \
     algorithm.gamma=1.0 \
     algorithm.lam=1.0

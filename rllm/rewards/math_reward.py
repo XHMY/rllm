@@ -153,6 +153,23 @@ def rllm_reward_fn_math(data_source: str, llm_solution: str, ground_truth: str |
     return reward_response
 
 
+def extract_boxed_answer(answer: str) -> str | None:
+    """Extracts the content within a LaTeX \boxed{} command from the given answer string.
+
+    Args:
+        answer: The answer string potentially containing a \boxed{} command.
+
+    Returns:
+        The content inside the \boxed{} command if found, otherwise None.
+    """
+    if "\\boxed" in answer:
+        start = answer.find("\\boxed")
+        brace_start = answer.find("{", start)
+        brace_end = answer.find("}", brace_start)
+        if brace_start != -1 and brace_end != -1:
+            return answer[brace_start + 1 : brace_end].strip()
+    return None
+
 if __name__ == "__main__":
     reward = RewardMathFn(RewardConfig())
     task_info = {

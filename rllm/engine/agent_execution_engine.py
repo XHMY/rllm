@@ -254,6 +254,9 @@ class AgentExecutionEngine:
         # for step return
         episode_steps = []
 
+        # for tracking token-to-step mapping (multi-agent support)
+        step_token_boundaries = []  # List of (start_idx, end_idx, step_idx) for assistant tokens
+
         # Reset environment with the task using the executor
         loop = asyncio.get_event_loop()
         observation, info = await loop.run_in_executor(self.executor, env.reset)
@@ -309,6 +312,10 @@ class AgentExecutionEngine:
             prompt_response_pair = {
                 "prompt": self.chat_parser.parse(prompt_messages, add_generation_prompt=True, is_first_msg=True),
                 "response": response,
+                "agent_role": agent_role,  # Track which agent generated this response
+                "reward": 0.0,  # Will be filled after env.step()
+                "is_solution_correct": None,  # Will be filled from info after env.step()
+                "solution_changed": None,  # Will be filled from info after env.step()
             }
             episode_steps.append(prompt_response_pair)
 
@@ -351,6 +358,12 @@ class AgentExecutionEngine:
             cur_step.done = done
             cur_step.info.update(info)
 
+            # Update the episode_steps dict with actual reward and metadata from environment
+            if episode_steps:
+                episode_steps[-1]["reward"] = reward
+                episode_steps[-1]["is_solution_correct"] = info.get("is_solution_correct")
+                episode_steps[-1]["solution_changed"] = info.get("solution_changed")
+
             chat_completions_messages = agent.chat_completions
             assistant_message, env_messages = get_recent_assistant_user_messages(chat_completions_messages)
 
@@ -391,8 +404,13 @@ class AgentExecutionEngine:
                 break
 
             # Update the token version of trajectory
+            # Track token boundaries for multi-agent trajectory splitting
+            start_idx = len(response_tokens)
             response_tokens.extend(assistant_msg_tokens)
             response_masks.extend(assistant_msg_masks)
+            end_idx = len(response_tokens)
+            step_token_boundaries.append((start_idx, end_idx, step_idx))
+
             observation = next_observation
 
             if total_time >= self.trajectory_timeout:
@@ -448,6 +466,8 @@ class AgentExecutionEngine:
         if mode == "Text":
             return trajectory
         elif mode == "Token":
+            # For multi-agent: Don't assign a single agent_role to the whole trajectory
+            # Instead, return the full trajectory object so we can split it by agent_role later
             token_result = {
                 "prompt_tokens": torch.tensor(prompt_tokens, dtype=torch.long),
                 "response_tokens": torch.tensor(response_tokens, dtype=torch.long),
@@ -455,6 +475,8 @@ class AgentExecutionEngine:
                 "trajectory_reward": trajectory.reward,
                 "idx": env.idx,
                 "chat_completions": agent.chat_completions,
+                "trajectory": trajectory,  # Full Trajectory object with steps (for multi-agent splitting)
+                "step_token_boundaries": step_token_boundaries,  # Maps tokens to steps: (start, end, step_idx)
                 "metrics": {
                     # Total number of steps taken in the trajectory
                     "steps": len(trajectory.steps),
@@ -473,8 +495,9 @@ class AgentExecutionEngine:
             return agent.chat_completions
         elif mode == "Step":
             steps_result = {
-                "steps": episode_steps,
-                "trajectory_reward": trajectory.reward,
+                "steps": episode_steps,  # Now includes agent_role and reward per step!
+                "trajectory_reward": trajectory.reward,  # Keep for metrics
+                "step_rewards": [step.reward for step in trajectory.steps][: len(episode_steps)],  # Per-step rewards
                 "idx": env.idx,
                 "mc_returns": [step.mc_return for step in trajectory.steps][: len(episode_steps)],
             }

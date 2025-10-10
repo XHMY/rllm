@@ -283,6 +283,8 @@ trainer:
   # RLLM arguments
   rejection_sample: False # Reject sample prompts that all succeed or all fail (0 signal for GRPO due to normalization).
   rejection_sample_multiplier: 2 # Multiple the training batch size by this factor to account for rejection sampling reduction.
+  agent_level_rejection_sampling: False # Enable multi-agent stratified rejection sampling (keeps informative samples per agent role).
+  negative_sample_ratio: 0.3 # Target ratio of negative samples in final batch (0.0-1.0). Used in stratified rejection sampling.
   n_training_gpus_per_node: 4 # For verl-pipeline.
 
 ray_init:
@@ -301,7 +303,7 @@ agent:
   overlong_filter: False
   normalize_step_advantage: False
   use_stepwise_advantage: False
-  stepwise_advantage_mode: "broadcast"
+  stepwise_advantage_mode: "mc_return"  # "mc_return" for per-step grouping, "broadcast" for broadcasting final step
   agent_args: {}
   engine_args: {}
 
