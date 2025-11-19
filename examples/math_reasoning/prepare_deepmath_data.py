@@ -78,7 +78,7 @@ def prepare_deepmath_data(
 
 
 if __name__ == "__main__":
-    train_dataset, test_dataset = prepare_deepmath_data(difficulty_range=(4,4))
+    train_dataset, test_dataset = prepare_deepmath_data()
 
     # Display sample examples
     train_data = train_dataset.get_data()
