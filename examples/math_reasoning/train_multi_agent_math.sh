@@ -10,7 +10,7 @@ export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
 rm -rf /tmp/rllm_tmp_lora/
 
 python3 -m examples.math_reasoning.train_multi_agent_math \
-    data.train_batch_size=64 \
+    data.train_batch_size=128 \
     data.max_prompt_length=8192 \
     data.max_response_length=5120 \
     actor_rollout_ref.model.path=Qwen/Qwen2.5-1.5B-Instruct \
@@ -22,7 +22,7 @@ python3 -m examples.math_reasoning.train_multi_agent_math \
     actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-mean \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -39,7 +39,7 @@ python3 -m examples.math_reasoning.train_multi_agent_math \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
-    actor_rollout_ref.rollout.n=4 \
+    actor_rollout_ref.rollout.n=8 \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
@@ -64,7 +64,7 @@ python3 -m examples.math_reasoning.train_multi_agent_math \
     trainer.save_freq=100 \
     trainer.test_freq=10 \
     trainer.default_hdfs_dir=null \
-    trainer.total_epochs=50 \
+    trainer.total_epochs=4 \
     +trainer.lora_adapter_path='/tmp/rllm_tmp_lora' \
     +trainer.agent_names=['generator','evaluator','refiner'] \
     +trainer.share_policy=False \
