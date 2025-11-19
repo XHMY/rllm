@@ -13,7 +13,7 @@ class Solver:
 
     async def generate_solution(self, problem: str) -> Trajectory:
         messages = [{"role": "user", "content": f"{problem}. Output the final answer within <answer>...</answer>"}]
-        output: ModelOutput = await self.rollout_engine.get_model_response(messages)
+        output: ModelOutput = await self.rollout_engine.get_model_response(messages, agent_name="solver")
         return Trajectory(
             name="solver",
             steps=[
@@ -44,7 +44,7 @@ class Judge:
 
     async def judge_solutions(self, problem: str, solutions: list[str]) -> Trajectory:
         messages = [{"role": "user", "content": self._create_judge_prompt(problem, solutions)}]
-        output: ModelOutput = await self.rollout_engine.get_model_response(messages)
+        output: ModelOutput = await self.rollout_engine.get_model_response(messages, agent_name="judge")
         return Trajectory(
             name="judge",
             steps=[

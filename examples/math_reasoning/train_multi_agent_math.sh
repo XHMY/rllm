@@ -7,15 +7,17 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
 
-python3 -m examples.solver_judge.train_solver_judge_flow \
+rm -rf /tmp/rllm_tmp_lora/
+
+python3 -m examples.math_reasoning.train_multi_agent_math \
     data.train_batch_size=64 \
-    data.max_prompt_length=2048 \
-    data.max_response_length=2048 \
-    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
+    data.max_prompt_length=8192 \
+    data.max_response_length=5120 \
+    actor_rollout_ref.model.path=Qwen/Qwen2.5-1.5B-Instruct \
     actor_rollout_ref.actor.optim.lr=2e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.model.lora_rank=128 \
-    actor_rollout_ref.model.lora_alpha=64 \
+    actor_rollout_ref.model.lora_rank=256 \
+    actor_rollout_ref.model.lora_alpha=128 \
     actor_rollout_ref.model.target_modules=['q_proj','k_proj','v_proj'] \
     actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-mean \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
@@ -54,19 +56,20 @@ python3 -m examples.solver_judge.train_solver_judge_flow \
     rllm.stepwise_advantage.mode=per_step \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
-    trainer.project_name='solver-judge-workflow' \
-    trainer.experiment_name='qwen3_4b' \
+    trainer.project_name='multi-agent-math-reasoning' \
+    trainer.experiment_name='qwen3_4b_math_3agents' \
     trainer.val_before_train=False \
     trainer.n_gpus_per_node=2 \
     trainer.nnodes=1 \
-    trainer.save_freq=1000 \
+    trainer.save_freq=100 \
     trainer.test_freq=10 \
     trainer.default_hdfs_dir=null \
-    trainer.total_epochs=100 \
+    trainer.total_epochs=50 \
     +trainer.lora_adapter_path='/tmp/rllm_tmp_lora' \
-    +trainer.agent_names=['solver','judge'] \
+    +trainer.agent_names=['generator','evaluator','refiner'] \
     +trainer.share_policy=False \
     +trainer.ori_single_policy_no_lora_mode=False \
-    rllm.workflow.use_workflow=True
+    rllm.workflow.use_workflow=True \
+    +rllm.workflow.max_refinement_iterations=3
 
-pkill -9 -f 'ray::WorkerDict' 
+pkill -9 -f 'ray::WorkerDict'

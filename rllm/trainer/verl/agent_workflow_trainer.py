@@ -1,10 +1,14 @@
 import asyncio
 import math
+import os
+import random
+import shutil
 import threading
 import uuid
 from collections import Counter, defaultdict
 from functools import reduce
 from pprint import pprint
+from os.path import join
 
 import numpy as np
 import torch
@@ -67,6 +71,17 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
             raise NotImplementedError("REMAX is not supported yet")
 
         super()._validate_config()
+
+    def _save_checkpoint(self):
+        super()._save_checkpoint()
+        # If LoRA adapters are used, copy from lora_adapter_base_path to checkpoint dir
+        if self.config.actor_rollout_ref.model.get("lora_rank", 0) > 0:
+            lora_adapter_base_path = self.config.trainer.get("lora_adapter_path", "tmp/rllm_tmp_lora")
+            local_global_step_folder = join(self.config.trainer.default_local_dir, f"global_step_{self.global_steps}")
+            shutil.copytree(
+                join(lora_adapter_base_path, f"step_{self.global_steps}"), 
+                join(local_global_step_folder, "lora_adapters"), dirs_exist_ok=True,
+            )
 
     def init_workers(self):
         super().init_workers()
@@ -395,11 +410,74 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
 
                     # implement critic warmup
                     if self.config.trainer.critic_warmup <= self.global_steps:
-                        # update actor
-                        with marked_timer("update_actor", timing_raw, color="red"):
-                            actor_output = self.actor_rollout_wg.update_actor(batch)
-                        actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
-                        metrics.update(actor_output_metrics)
+                        # Multi-agent LoRA: Update each agent's adapter separately
+                        agent_names = self.config.trainer.get("agent_names", None)
+
+                        if agent_names and (not self.config.trainer.get("share_policy", False)):
+                            # Extract agent names from trajectory_ids and group batch data
+                            trajectory_ids = batch.non_tensor_batch["trajectory_ids"]
+
+                            # Extract unique agent names from this batch
+                            batch_agent_names = set()
+                            for traj_id in trajectory_ids:
+                                agent_name = traj_id.rsplit("_", 1)[1]
+                                batch_agent_names.add(agent_name)
+
+                            print(f"Updating {len(batch_agent_names)} agents: {batch_agent_names}")
+
+                            # Update each agent sequentially
+                            all_agent_metrics = {}
+                            for agent_name in sorted(batch_agent_names):  # Sort for deterministic ordering
+                                # Filter batch to only include this agent's trajectories
+                                agent_mask = np.array([traj_id.rsplit("_", 1)[1] == agent_name for traj_id in trajectory_ids])
+                                agent_batch = batch.select_idxs(agent_mask)
+                                
+                                # Select agent_batch to be multiple of world size (self.actor_rollout_wg.world_size)
+                                agent_batch = agent_batch[: (agent_batch.batch["input_ids"].shape[0] // self.actor_rollout_wg.world_size) * self.actor_rollout_wg.world_size]
+
+                                if len(agent_batch) == 0:
+                                    continue
+
+                                print(f"Updating agent '{agent_name}' with {len(agent_batch)} samples")
+
+                                # Switch to this agent's LoRA adapter
+                                with marked_timer(f"set_active_lora_{agent_name}", timing_raw, color="orange"):
+                                    self.actor_rollout_wg.set_active_lora(agent_name, {})
+
+                                # Update the active adapter
+                                with marked_timer(f"update_actor_{agent_name}", timing_raw, color="red"):
+                                    agent_output = self.actor_rollout_wg.update_actor(agent_batch)
+
+                                # Collect metrics with agent prefix
+                                agent_metrics = reduce_metrics(agent_output.meta_info["metrics"])
+                                for key, value in agent_metrics.items():
+                                    all_agent_metrics[f"{agent_name}/{key}"] = value
+
+                            # Aggregate all agent metrics
+                            metrics.update(all_agent_metrics)
+
+                        else:
+                            # Single-agent mode: use original update logic
+                            with marked_timer("update_actor", timing_raw, color="red"):
+                                actor_output = self.actor_rollout_wg.update_actor(batch)
+                            actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
+                            metrics.update(actor_output_metrics)
+
+
+                        if not self.config.trainer.get("ori_single_policy_no_lora_mode", False):
+                            # Save all agent LoRA adapters after update (per-iteration saving)
+                            lora_adapter_base_path = self.config.trainer.get("lora_adapter_path", "tmp/rllm_tmp_lora")
+                            # remove all files under lora_adapter_base_path first
+                            shutil.rmtree(lora_adapter_base_path, ignore_errors=True)
+                            
+                            print(f"Saving all LoRA adapters after step {self.global_steps}")
+                            for agent_name in agent_names:
+                                agent_lora_path = join(lora_adapter_base_path, f"step_{self.global_steps}", agent_name)
+                                with marked_timer(f"save_lora_{agent_name}", timing_raw, color="green"):
+                                    self.actor_rollout_wg.save_single_lora_adapter(
+                                        agent_name=agent_name, save_path=agent_lora_path,
+                                        global_step=self.global_steps
+                                    )
 
                     # validate
                     if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and self.global_steps % self.config.trainer.test_freq == 0:

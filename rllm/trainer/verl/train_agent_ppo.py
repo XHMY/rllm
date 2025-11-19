@@ -8,7 +8,7 @@ import socket
 
 import hydra
 import ray
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 
 from rllm.trainer.env_agent_mappings import AGENT_CLASS_MAPPING, ENV_CLASS_MAPPING, WORKFLOW_CLASS_MAPPING
 from rllm.trainer.verl.agent_ppo_trainer import AgentPPOTrainer
@@ -80,6 +80,14 @@ class TaskRunner:
         OmegaConf.register_new_resolver("mul", lambda x, y: int(x) * int(y))
         OmegaConf.resolve(config)
         pprint(OmegaConf.to_container(config))
+
+        with open_dict(config.actor_rollout_ref):
+            if config.trainer.get("share_policy", False):
+                config.trainer.agent_names = ["default"]
+
+            config.actor_rollout_ref.share_policy = config.trainer.get("share_policy", False)
+            config.actor_rollout_ref.agent_names = config.trainer.get("agent_names", None)
+            config.actor_rollout_ref.ori_single_policy_no_lora_mode = config.trainer.get("ori_single_policy_no_lora_mode", False)
 
         # Download the checkpoint from HDFS to the local machine.
         # `use_shm` determines whether to use shared memory, which could lead to faster model loading if turned on

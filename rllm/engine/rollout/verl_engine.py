@@ -1,9 +1,13 @@
+import os.path
 import uuid
+from glob import glob
 
 from rllm.engine.rollout.rollout_engine import ModelOutput, RolloutEngine
 from rllm.parser import ChatTemplateParser
 from rllm.workflows import TerminationEvent, TerminationReason
 from verl.experimental.agent_loop.agent_loop import AsyncLLMServerManager
+from vllm.lora.request import LoRARequest
+from os.path import join
 
 
 class VerlEngine(RolloutEngine):
@@ -48,6 +52,7 @@ class VerlEngine(RolloutEngine):
         tools = kwargs.pop("tools", [])
         accumulate_reasoning = kwargs.pop("accumulate_reasoning", self.accumulate_reasoning)
 
+        agent_name = kwargs.pop("agent_name")
         sampling_params = self.val_sampling_params.copy() if self.validate or validate else self.train_sampling_params.copy()
         sampling_params.update(kwargs)
 
@@ -60,7 +65,24 @@ class VerlEngine(RolloutEngine):
         if enforce_max_prompt_length and prompt_length > self.max_prompt_length:
             raise TerminationEvent(TerminationReason.MAX_PROMPT_LENGTH_EXCEEDED)
 
-        completion_ids: list[int] = await self.server_manager.generate(request_id=application_id, prompt_ids=prompt_ids, sampling_params=sampling_params)
+        share_policy = self.config.trainer.get("share_policy", False)
+        agent_name = "default" if share_policy else agent_name
+        agent_lora_dir = join(self.config.trainer.get("lora_adapter_path"), "step_*", agent_name)
+
+        if os.path.exists(agent_lora_dir) and (not self.config.trainer.get("ori_single_policy_no_lora_mode", False)):
+            print("Loading LoRA adapter for agent:", agent_name)
+            target_lora_file_path = glob(agent_lora_dir)
+            assert len(target_lora_file_path) == 1, f"Expected one LoRA adapter file in {agent_lora_dir}, but found {len(target_lora_file_path)}"
+            lora_request = LoRARequest(agent_name,
+                                       self.config.trainer.get("agent_names").index(agent_name) + 1,
+                                       target_lora_file_path[0])
+        else:
+            lora_request = None
+
+        completion_ids: list[int] = await self.server_manager.generate(
+            request_id=application_id, prompt_ids=prompt_ids, sampling_params=sampling_params,
+            lora_request=lora_request
+        )
 
         finish_reason = "stop"
         if len(completion_ids) >= max_tokens:

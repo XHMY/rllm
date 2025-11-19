@@ -11,6 +11,9 @@ def main(config):
     train_dataset = DatasetRegistry.load_dataset("countdown", "train")
     test_dataset = DatasetRegistry.load_dataset("countdown", "test")
 
+    assert train_dataset is not None, "Failed to load train dataset"
+    assert test_dataset is not None, "Failed to load test dataset"
+
     trainer = AgentTrainer(
         workflow_class=SolverJudgeWorkflow,
         workflow_args={
