@@ -38,17 +38,47 @@ trainer:
   # Policy sharing configuration
   share_policy: False  # Each agent has separate policy by default
 
+  # LoRA configuration for multi-agent
+  lora_adapter_path: '/tmp/rllm_tmp_lora'
+  ori_single_policy_no_lora_mode: False
+
+  # Validation configuration
+  val_before_train: False
+
   # Default logging for multi-agent
   project_name: multi-agent-workflow
   experiment_name: multi-agent-training
 
-# Rollout configuration optimized for multi-agent
+# Actor, rollout, and model configuration optimized for multi-agent
 actor_rollout_ref:
+  model:
+    use_remove_padding: True
+
+  actor:
+    loss_agg_mode: seq-mean-token-mean
+    use_dynamic_bsz: True
+    ppo_max_token_len_per_gpu: 32768
+    clip_ratio_high: 0.28
+    fsdp_config:
+      param_offload: True
+      optimizer_offload: True
+
   rollout:
     # Higher sampling for multi-agent exploration
     n: 8
     temperature: 0.6
+    tensor_model_parallel_size: 1
+    enforce_eager: False
+    gpu_memory_utilization: 0.8
     val_kwargs:
       n: 1
       temperature: 0.6
       top_p: 0.95
+
+  ref:
+    fsdp_config:
+      param_offload: True
+
+# Algorithm configuration for multi-agent
+algorithm:
+  adv_estimator: grpo

@@ -15,32 +15,17 @@ python3 -m examples.math_reasoning.train_multi_agent_math \
     data.max_response_length=5120 \
     actor_rollout_ref.model.path=Qwen/Qwen2.5-1.5B-Instruct \
     actor_rollout_ref.actor.optim.lr=2e-6 \
-    actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.lora_rank=256 \
     actor_rollout_ref.model.lora_alpha=128 \
     actor_rollout_ref.model.target_modules=['q_proj','k_proj','v_proj'] \
-    actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-mean \
-    actor_rollout_ref.actor.use_dynamic_bsz=True \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768 \
     actor_rollout_ref.actor.ppo_mini_batch_size=128 \
-    actor_rollout_ref.actor.clip_ratio_high=0.28 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=True \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.enforce_eager=False \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
-    actor_rollout_ref.ref.fsdp_config.param_offload=True \
-    algorithm.adv_estimator=grpo \
     trainer.project_name='multi-agent-math-reasoning' \
     trainer.experiment_name='qwen3_4b_math_3agents' \
-    trainer.val_before_train=False \
     trainer.n_gpus_per_node=2 \
     trainer.save_freq=100 \
     trainer.test_freq=10 \
     trainer.total_epochs=4 \
-    +trainer.lora_adapter_path='/tmp/rllm_tmp_lora' \
     +trainer.agent_names=['generator','evaluator','refiner'] \
-    +trainer.ori_single_policy_no_lora_mode=False \
     +rllm.workflow.max_refinement_iterations=3
 
 pkill -9 -f 'ray::WorkerDict'
