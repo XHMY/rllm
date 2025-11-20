@@ -5,7 +5,7 @@ from rllm.data import DatasetRegistry
 from rllm.trainer.agent_trainer import AgentTrainer
 
 
-@hydra.main(config_path="pkg://rllm.trainer.config", config_name="agent_ppo_trainer", version_base=None)
+@hydra.main(config_path="pkg://rllm.trainer.config", config_name="multi_agent_ppo_trainer", version_base=None)
 def main(config):
     # Load SWE datasets - using names from prepare_swe_data.py
     train_dataset = DatasetRegistry.load_dataset("R2E_Gym_Subset", "train")

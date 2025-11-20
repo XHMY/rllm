@@ -1,0 +1,54 @@
+hydra:
+  searchpath:
+    - pkg://rllm.trainer.config
+    - pkg://verl.trainer.config
+
+defaults:
+  - agent_ppo_trainer
+  - _self_
+
+# Multi-agent workflow specific overrides
+rllm:
+  workflow:
+    use_workflow: True
+    # Default workflow config - override in specific training scripts
+    workflow_args:
+      max_refinement_iterations: 3
+      reward_function: null
+
+  # Enable stepwise advantage for multi-agent trajectories
+  stepwise_advantage:
+    enable: True
+    mode: per_step
+
+  # Enable compact filtering to handle multi-agent edge cases
+  compact_filtering:
+    enable: False  # Can be enabled per example
+    mask_max_prompt_length_exceeded: True
+    mask_max_response_length_exceeded: True
+    mask_max_turns_exceeded: False
+    mask_timeout: True
+
+# Multi-agent training specific settings
+trainer:
+  # Agent names for multi-agent systems
+  # Override this in specific training scripts with actual agent names
+  agent_names: null  # e.g., ['generator', 'evaluator', 'refiner']
+
+  # Policy sharing configuration
+  share_policy: False  # Each agent has separate policy by default
+
+  # Default logging for multi-agent
+  project_name: multi-agent-workflow
+  experiment_name: multi-agent-training
+
+# Rollout configuration optimized for multi-agent
+actor_rollout_ref:
+  rollout:
+    # Higher sampling for multi-agent exploration
+    n: 8
+    temperature: 0.6
+    val_kwargs:
+      n: 1
+      temperature: 0.6
+      top_p: 0.95

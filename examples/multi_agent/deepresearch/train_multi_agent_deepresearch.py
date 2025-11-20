@@ -5,7 +5,7 @@ from rllm.data import DatasetRegistry
 from rllm.trainer.agent_trainer import AgentTrainer
 
 
-@hydra.main(config_path="pkg://rllm.trainer.config", config_name="agent_ppo_trainer", version_base=None)
+@hydra.main(config_path="pkg://rllm.trainer.config", config_name="multi_agent_ppo_trainer", version_base=None)
 def main(config):
     # Note: DeepResearch typically uses evaluation datasets like HLE (Humanity's Last Exam)
     # For training, you would need to prepare a suitable research-question dataset

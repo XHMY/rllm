@@ -46,7 +46,14 @@ python examples/search/prepare_hotpotqa_data.py
 
 ### 2. Configure Training
 
-Training uses Hydra for configuration management. The default config is `agent_ppo_trainer` from `rllm.trainer.config`.
+Training uses Hydra for configuration management. All multi-agent training scripts use the **`multi_agent_ppo_trainer`** config from `rllm.trainer.config`.
+
+**Multi-Agent Config** (`rllm/trainer/config/multi_agent_ppo_trainer.yaml`):
+- Extends the base `agent_ppo_trainer` config (no duplication)
+- Sets `rllm.workflow.use_workflow: True` by default
+- Enables `stepwise_advantage` for per-agent rewards
+- Adds multi-agent defaults (agent names, policy sharing, etc.)
+- Optimized rollout settings for multi-agent exploration
 
 You can override any configuration parameter via command line or config files.
 
