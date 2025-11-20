@@ -193,6 +193,42 @@ class AnswerVerifier:
 
 ---
 
+### 4. Search
+
+#### Single-Agent
+```python
+class ToolAgent(BaseAgent):
+    def __init__(self, tools):
+        self.tools = MultiTool(tools=tools)
+        self._trajectory = Trajectory()
+
+    # Handles: query generation, search, answer extraction
+    def update_from_model(self, response):
+        tool_calls = self.tool_parser.parse(response)
+        # All in one agent
+```
+
+#### Multi-Agent
+```python
+class QueryOptimizer:
+    # Optimizes search queries
+    async def optimize_queries(self, question):
+        return Trajectory(name="query_optimizer", ...)
+
+class DocumentRetriever:
+    # Retrieves documents
+    async def retrieve_documents(self, question, query):
+        search_results = await self._execute_search(query)
+        return Trajectory(name="document_retriever", ...)
+
+class AnswerExtractor:
+    # Extracts final answer
+    async def extract_answer(self, question, all_results):
+        return Trajectory(name="answer_extractor", ...)
+```
+
+---
+
 ## Execution Flow Comparison
 
 ### Single-Agent Flow
@@ -399,6 +435,7 @@ refine_traj.reward = improvement_reward(...)
 - Code generation with debugging (generate → test → refine)
 - Research questions (plan → gather → synthesize)
 - Complex software engineering (analyze → implement → validate)
+- Information retrieval (optimize queries → retrieve documents → extract answer)
 
 ---
 

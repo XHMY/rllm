@@ -128,6 +128,36 @@ python examples/multi_agent/deepresearch/run_multi_agent_deepresearch.py
 
 ---
 
+### 5. Multi-Agent Search (`search/`)
+
+**Problem**: Information retrieval and question answering tasks
+
+**Agents**:
+- **QueryOptimizer**: Analyzes question and generates optimized search queries
+- **DocumentRetriever**: Uses search tools to retrieve relevant documents
+- **AnswerExtractor**: Extracts and synthesizes final answer from retrieved documents
+
+**Pattern**: QueryOptimizer → DocumentRetriever(s) [parallel] → AnswerExtractor
+
+**Key Features**:
+- Query optimization for better retrieval
+- Parallel document retrieval for multiple queries
+- Answer extraction and synthesis from multiple sources
+- Optional refinement based on answer quality
+
+**Usage**:
+```bash
+python examples/multi_agent/search/run_multi_agent_search.py
+```
+
+**Metrics**:
+- `num_queries_generated`: Number of optimized queries generated
+- `total_searches`: Total number of search operations performed
+- `extractor_attempts`: Number of answer extraction attempts
+- `answer_correct`: Whether final answer is correct
+
+---
+
 ## Comparison with Single-Agent Examples
 
 ### DeepCoder
@@ -146,6 +176,10 @@ python examples/multi_agent/deepresearch/run_multi_agent_deepresearch.py
 - **Single-agent** (`examples/deepresearch/`): Single `MultiTurnReactAgent` handles research
 - **Multi-agent** (`examples/multi_agent/deepresearch/`): Separate planner, gatherer(s), and synthesizer agents
 
+### Search
+- **Single-agent** (`examples/search/`): Single `ToolAgent` handles search and answer extraction
+- **Multi-agent** (`examples/multi_agent/search/`): Separate query optimizer, document retriever(s), and answer extractor agents
+
 ---
 
 ## Multi-Agent Patterns
@@ -162,12 +196,12 @@ python examples/multi_agent/deepresearch/run_multi_agent_deepresearch.py
 - Continues until success or max iterations
 
 ### Pattern 2: Parallel Gathering + Synthesis
-**Examples**: DeepResearch
+**Examples**: DeepResearch, Search
 
-**Flow**: Planner → [Gatherer, Gatherer, ...] → Synthesizer
+**Flow**: Planner/Optimizer → [Gatherer/Retriever, Gatherer/Retriever, ...] → Synthesizer/Extractor
 
 **Characteristics**:
-- Planning phase creates sub-tasks
+- Planning/optimization phase creates sub-tasks or queries
 - Multiple agents work in parallel
 - Synthesis combines all results
 - More efficient for decomposable tasks
@@ -302,7 +336,6 @@ Potential additional multi-agent examples:
 - **Countdown**: Solver-Judge pattern (like solver_judge)
 - **AppWorld**: Planner-Executor-Validator pattern
 - **Terminal**: Command-Planner-Executor-Checker pattern
-- **Search**: Query-Optimizer-Retriever-Extractor pattern
 
 ---
 
