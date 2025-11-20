@@ -269,12 +269,34 @@ await rollout_engine.get_model_response(messages, agent_name="evaluator")
 
 ## Training Multi-Agent Systems
 
-Multi-agent workflows can be trained using the standard training pipeline:
+All multi-agent workflows include training scripts. Each example can be trained using PPO:
 
+**Training Scripts**:
+- DeepCoder: `examples/multi_agent/deepcoder/train_multi_agent_deepcoder.py`
+- SWE: `examples/multi_agent/swe/train_multi_agent_swe.py`
+- Math Tool: `examples/multi_agent/math_tool/train_multi_agent_math_tool.py`
+- Search: `examples/multi_agent/search/train_multi_agent_search.py`
+- DeepResearch: `examples/multi_agent/deepresearch/train_multi_agent_deepresearch.py`
+
+**Quick Start**:
+```bash
+# 1. Prepare dataset (if not already done)
+python examples/deepcoder/prepare_deepcoder_data.py
+
+# 2. Run training
+python examples/multi_agent/deepcoder/train_multi_agent_deepcoder.py
+
+# 3. With custom config
+python examples/multi_agent/deepcoder/train_multi_agent_deepcoder.py \
+    data.train_batch_size=16 \
+    trainer.total_epochs=10
+```
+
+**Training code example**:
 ```python
-from rllm.trainer.workflow_trainer import WorkflowTrainer
+from rllm.trainer.agent_trainer import AgentTrainer
 
-trainer = WorkflowTrainer(
+trainer = AgentTrainer(
     workflow_class=MultiAgentDeepCoderWorkflow,
     workflow_args={
         "reward_function": code_reward_fn,
@@ -282,15 +304,18 @@ trainer = WorkflowTrainer(
     },
     config=config,
     train_dataset=train_dataset,
-    val_dataset=val_dataset,
+    val_dataset=test_dataset,
 )
 trainer.train()
 ```
 
-**Key considerations**:
+**Key Features**:
 - Each agent can have its own reward signal
 - Can train agents jointly or separately
 - Metrics track individual agent performance
+- Supports distributed training with Ray
+
+📖 **See [TRAINING.md](TRAINING.md) for detailed training guide**
 
 ---
 
