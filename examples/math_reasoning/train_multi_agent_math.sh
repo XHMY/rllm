@@ -15,17 +15,14 @@ python3 -m examples.math_reasoning.train_multi_agent_math \
     data.max_response_length=5120 \
     actor_rollout_ref.model.path=Qwen/Qwen2.5-1.5B-Instruct \
     actor_rollout_ref.actor.optim.lr=2e-6 \
-    actor_rollout_ref.model.lora_rank=256 \
-    actor_rollout_ref.model.lora_alpha=128 \
-    actor_rollout_ref.model.target_modules=['q_proj','k_proj','v_proj'] \
     actor_rollout_ref.actor.ppo_mini_batch_size=128 \
     trainer.project_name='multi-agent-math-reasoning' \
-    trainer.experiment_name='qwen3_4b_math_3agents' \
+    trainer.experiment_name='qwen2.5_1.5b_math_3agents' \
     trainer.n_gpus_per_node=2 \
     trainer.save_freq=100 \
     trainer.test_freq=10 \
     trainer.total_epochs=4 \
-    +trainer.agent_names=['generator','evaluator','refiner'] \
+    trainer.agent_names=['generator','evaluator','refiner'] \
     +rllm.workflow.max_refinement_iterations=3
 
 pkill -9 -f 'ray::WorkerDict'
