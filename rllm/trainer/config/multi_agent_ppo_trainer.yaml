@@ -1,0 +1,139 @@
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - ppo_trainer # Kept target default, change to agent_ppo_trainer if required
+  - _self_
+
+# Algorithm configuration (From Source A)
+algorithm:
+  adv_estimator: grpo
+
+# Actor, rollout, and model configuration
+actor_rollout_ref:
+  model:
+    lora_rank: 256
+    lora_alpha: 128
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+    use_remove_padding: True # From Source A
+
+  actor:
+    # Optimization settings from Source A
+    loss_agg_mode: seq-mean-token-mean
+    use_dynamic_bsz: True
+    ppo_max_token_len_per_gpu: 32768
+    clip_ratio_high: 0.28
+    fsdp_config:
+      param_offload: True
+      optimizer_offload: True
+
+  ref:
+    fsdp_config:
+      param_offload: True # From Source A
+
+  rollout:
+    # Merged settings
+    mode: async            # From Source B
+    n: 8                   # From Source A (Higher sampling)
+    temperature: 0.6       # From Source A
+    tensor_model_parallel_size: 1
+    enforce_eager: False
+    gpu_memory_utilization: 0.8
+
+    agent:
+      num_workers: 0       # From Source B
+
+    val_kwargs:
+      do_sample: True      # From Source B
+      n: 1                 # From Source A
+      temperature: 0.6     # From Source A
+      top_p: 0.95          # From Source A
+
+data:
+  # Depends on rllm.rejection_sample.multiplier existing below
+  gen_batch_size: ${mul:${data.train_batch_size},${rllm.rejection_sample.multiplier}}
+
+rllm:
+  agent:
+    name: math_agent
+    max_steps: 20
+    trajectory_timeout: null
+    overlong_filter: False
+    agent_args: {}
+    engine_args: {}
+
+  env:
+    name: custom
+    env_args: {}
+
+  # Multi-agent workflow specific overrides (Merged)
+  workflow:
+    use_workflow: True # Enabled (From Source A)
+    name: single_turn_workflow
+
+    # Merged workflow arguments
+    workflow_args:
+      reward_function: null
+      # From Source B
+      agent_cls: null
+      agent_args: {}
+      env_cls: null
+      env_args: {}
+      timeout: 1e6
+      gamma: 0.0
+      reward_bonus_coeff: 0.0
+
+    n_parallel_tasks: 256
+    retry_limit: 3
+
+  disable_thinking: False
+  accumulate_reasoning: False
+  mask_truncated_samples: False
+
+  # Enable stepwise advantage for multi-agent trajectories (From Source A)
+  stepwise_advantage:
+    enable: True
+    mode: per_step
+    normalize_by_steps: False
+
+  # Compact filtering (Merged Source A overrides into B)
+  compact_filtering:
+    enable: False
+    mask_max_prompt_length_exceeded: True
+    mask_max_response_length_exceeded: True
+    mask_env_done: False
+    mask_max_turns_exceeded: False # Source A set this to False
+    mask_timeout: True
+    mask_unknown: False
+    mask_error: True
+
+  # Kept from Source B to support data.gen_batch_size interpolation
+  rejection_sample:
+    enable: False
+    multiplier: 1
+
+fireworks:
+  deployment_id: null
+  model_id_prefix: test-model
+  concurrency: 32
+
+trainer:
+  nnodes: 1
+  project_name: multi-agent-workflow # From Source A
+  experiment_name: multi-agent-training # From Source A
+  log_episodes: false
+  episode_log_dir: logs/${trainer.project_name}/${trainer.experiment_name}
+
+  # Multi-agent specific trainer settings (From Source A)
+  agent_names: null
+  share_policy: False
+  lora_adapter_path: '/tmp/rllm_tmp_lora'
+  ori_single_policy_no_lora_mode: False
+  val_before_train: False
+
+ray_init:
+  include_dashboard: True
