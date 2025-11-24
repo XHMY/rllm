@@ -43,19 +43,11 @@ class CodeGenerator:
                     chat_completions=messages
                     + [{"role": "assistant", "content": output.content, "reasoning": output.reasoning}],
                     thought=output.reasoning,
-                    action=self._extract_code(output.content),
+                    action=output.content,
                     model_output=output,
                 )
             ],
         )
-
-    def _extract_code(self, response: str) -> str:
-        """Extract code from markdown code blocks."""
-        pattern = r"```python\n(.*?)```"
-        match = re.search(pattern, response, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        return response.strip()
 
 
 class TestRunner:
@@ -67,10 +59,10 @@ class TestRunner:
     async def analyze_tests(self, problem: str, code: str, test_results: list[dict]) -> Trajectory:
         """Analyze test failures and provide diagnostic feedback."""
         messages = [{"role": "user", "content": self._create_test_analysis_prompt(problem, code, test_results)}]
-        output: ModelOutput = await self.rollout_engine.get_model_response(messages, agent_name="test_runner")
+        output: ModelOutput = await self.rollout_engine.get_model_response(messages, agent_name="runner")
 
         return Trajectory(
-            name="test_runner",
+            name="runner",
             steps=[
                 Step(
                     chat_completions=messages
@@ -151,7 +143,7 @@ class CodeRefiner:
                     chat_completions=messages
                     + [{"role": "assistant", "content": output.content, "reasoning": output.reasoning}],
                     thought=output.reasoning,
-                    action=self._extract_code(output.content),
+                    action=output.content,
                     model_output=output,
                 )
             ],
@@ -185,14 +177,6 @@ Please provide an improved solution that fixes the identified issues.
 Wrap your code in ```python and ``` tags.
 """
         return prompt
-
-    def _extract_code(self, response: str) -> str:
-        """Extract code from markdown code blocks."""
-        pattern = r"```python\n(.*?)```"
-        match = re.search(pattern, response, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        return response.strip()
 
 
 class MultiAgentDeepCoderWorkflow(Workflow):
@@ -321,4 +305,5 @@ class MultiAgentDeepCoderWorkflow(Workflow):
             }
         else:
             # Fallback: simple evaluation
-            return {"reward": 0.0, "all_passed": False, "test_results": [], "pass_rate": 0.0}
+            raise NotImplementedError("A reward function must be provided for code evaluation.")
+            # return {"reward": 0.0, "all_passed": False, "test_results": [], "pass_rate": 0.0}

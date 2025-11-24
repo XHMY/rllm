@@ -22,11 +22,12 @@ python3 -m examples.multi_agent.deepcoder.train_multi_agent_deepcoder \
     actor_rollout_ref.actor.ppo_mini_batch_size=16 \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=24577 \
     trainer.project_name='multi-agent-deepcoder' \
-    trainer.experiment_name='qwen2.5_7b_deepcoder_3agents' \
-    trainer.n_gpus_per_node=2 \
+    trainer.experiment_name='qwen2.5_7b_deepcoder_3agents_share_policy' \
+    trainer.n_gpus_per_node=4 \
     trainer.save_freq=100 \
     trainer.test_freq=10 \
     trainer.total_epochs=4 \
+    trainer.share_policy=True \
     trainer.agent_names=['generator','runner','refiner']
 
 # Clean up Ray workers

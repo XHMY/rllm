@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 import polars as pl
 import torch
+from datasets import Dataset as HFDataset
 
 logger = logging.getLogger(__name__)
 
@@ -184,17 +185,19 @@ class DatasetRegistry:
         else:
             # Assume it's already a list of dictionaries
             data_list = data
-            data_df = pd.DataFrame(data_list)
 
-        # Save original data
+        # Convert to HuggingFace Dataset for proper parquet serialization
+        hf_dataset = HFDataset.from_list(data_list)
+
+        # Save original data using HuggingFace datasets library
         dataset_path = os.path.join(dataset_dir, f"{split}.parquet")
-        data_df.to_parquet(dataset_path)
+        hf_dataset.to_parquet(dataset_path)
 
         # Apply Verl postprocessing and save
         verl_data = cls.apply_verl_postprocessing(data_list)
         verl_dataset_path = os.path.join(dataset_dir, f"{split}_verl.parquet")
-        verl_data_df = pd.DataFrame(verl_data)
-        verl_data_df.to_parquet(verl_dataset_path)
+        verl_hf_dataset = HFDataset.from_list(verl_data)
+        verl_hf_dataset.to_parquet(verl_dataset_path)
 
         # Update registry
         registry = cls._load_registry()
