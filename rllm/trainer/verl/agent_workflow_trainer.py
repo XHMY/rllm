@@ -103,6 +103,49 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
         # init workflow workers
         asyncio.run_coroutine_threadsafe(self.agent_execution_engine.initialize_pool(), self._loop).result()
 
+    def _split_batch_by_agent(self, batch: DataProto) -> dict[str, tuple[DataProto, list[int]]]:
+        """Split batch by agent name extracted from trajectory_ids.
+
+        Agent names are embedded in trajectory_ids as a suffix (e.g., "traj_123_agent_0").
+        Extract via traj_id.rsplit("_", 1)[1].
+
+        Each agent's sub-batch is padded to be divisible by world_size for distributed
+        training. The padding is transparent to callers since scatter-back logic only
+        iterates over original indices.
+
+        Args:
+            batch: The full batch with trajectory_ids in non_tensor_batch
+
+        Returns:
+            Dict mapping agent_name -> (sub_batch, original_indices)
+            Note: sub_batch may contain padding samples, but original_indices only
+            contains the non-padded sample indices for scatter-back operations.
+        """
+        trajectory_ids = batch.non_tensor_batch["trajectory_ids"]
+        agent_names = [traj_id.rsplit("_", 1)[1] for traj_id in trajectory_ids]
+
+        # Group indices by agent name
+        agent_to_indices = defaultdict(list)
+        for idx, agent_name in enumerate(agent_names):
+            agent_to_indices[agent_name].append(idx)
+
+        # Get world_size for padding
+        world_size = self.actor_rollout_wg.world_size
+
+        # Create sub-batches with padding
+        result = {}
+        for agent_name, indices in agent_to_indices.items():
+            sub_batch = batch.select_idxs(indices)
+
+            # Pad sub_batch to be divisible by world_size
+            if world_size > 0 and len(sub_batch) % world_size != 0:
+                sub_batch, _ = pad_dataproto_to_divisor(sub_batch, world_size)
+
+            # Return original indices (without padding) for scatter-back
+            result[agent_name] = (sub_batch, indices)
+
+        return result
+
     def fit_agent(self):
         """
         The training loop of PPO. Adapted to train the underlying model of agent.
@@ -273,17 +316,52 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
                         # then we just pad the batch size to a multiple of world size
                         batch = self._pad_dataproto_to_world_size(batch=batch)
 
-                    # recompute old_log_probs
+                    # recompute old_log_probs - per agent if multi-agent mode
                     with marked_timer("old_log_prob", timing_raw, color="blue"):
-                        old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
-                        entropys = old_log_prob.batch["entropys"]
+
+                        if not self.config.trainer.share_policy:
+                            # Multi-agent mode: compute log probs per agent
+                            agent_batches = self._split_batch_by_agent(batch)
+
+                            # Pre-allocate result tensors with response length (not full sequence length)
+                            # compute_log_prob returns log probs only for response tokens
+                            response_length = batch.batch["responses"].shape[1]
+                            batch_size = batch.batch["attention_mask"].shape[0]
+                            device = batch.batch["attention_mask"].device
+                            all_old_log_probs = torch.zeros(batch_size, response_length, dtype=torch.float32, device=device)
+                            all_entropys = torch.zeros(batch_size, response_length, dtype=torch.float32, device=device)
+
+                            for agent_name, (sub_batch, indices) in agent_batches.items():
+                                if len(sub_batch) == 0:
+                                    continue  # Skip empty batches silently
+
+                                # Switch to agent's LoRA adapter
+                                self.actor_rollout_wg.set_active_lora(agent_role=agent_name, lora_config={})
+
+                                # Compute log probs for this agent's samples
+                                sub_log_prob = self.actor_rollout_wg.compute_log_prob(sub_batch)
+
+                                # Scatter results back to original positions
+                                for i, orig_idx in enumerate(indices):
+                                    all_old_log_probs[orig_idx] = sub_log_prob.batch["old_log_probs"][i]
+                                    all_entropys[orig_idx] = sub_log_prob.batch["entropys"][i]
+
+                            # Store aggregated results
+                            batch.batch["old_log_probs"] = all_old_log_probs
+                            entropys = all_entropys
+                        else:
+                            # Single-agent mode: original behavior
+                            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                            entropys = old_log_prob.batch["entropys"]
+                            old_log_prob.batch.pop("entropys")
+                            batch = batch.union(old_log_prob)
+
+                        # Compute entropy metrics (common to both paths)
                         response_masks = batch.batch["response_mask"]
                         loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
                         entropy_agg = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
                         old_log_prob_metrics = {"actor/entropy": entropy_agg.detach().item()}
                         metrics.update(old_log_prob_metrics)
-                        old_log_prob.batch.pop("entropys")
-                        batch = batch.union(old_log_prob)
 
                         if "rollout_log_probs" in batch.batch.keys():
                             # TODO: we may want to add diff of probs too.
@@ -310,13 +388,42 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
                             )
 
                     if self.use_reference_policy:
-                        # compute reference log_prob
+                        # compute reference log_prob - per agent if multi-agent mode
                         with marked_timer("ref", timing_raw, color="olive"):
-                            if not self.ref_in_actor:
-                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
+
+                            if not self.config.trainer.share_policy:
+                                # Multi-agent mode: compute ref log probs per agent
+                                agent_batches = self._split_batch_by_agent(batch)
+
+                                # Pre-allocate result tensor with response length (not full sequence length)
+                                # compute_ref_log_prob returns log probs only for response tokens
+                                response_length = batch.batch["responses"].shape[1]
+                                batch_size = batch.batch["attention_mask"].shape[0]
+                                device = batch.batch["attention_mask"].device
+                                all_ref_log_probs = torch.zeros(batch_size, response_length, dtype=torch.float32, device=device)
+
+                                for agent_name, (sub_batch, indices) in agent_batches.items():
+                                    if len(sub_batch) == 0:
+                                        continue  # Skip empty batches silently
+
+                                    # For reference policy, compute without LoRA adapter
+                                    if not self.ref_in_actor:
+                                        sub_ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(sub_batch)
+                                    else:
+                                        sub_ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(sub_batch)
+
+                                    # Scatter results back
+                                    for i, orig_idx in enumerate(indices):
+                                        all_ref_log_probs[orig_idx] = sub_ref_log_prob.batch["ref_log_prob"][i]
+
+                                batch.batch["ref_log_prob"] = all_ref_log_probs
                             else:
-                                ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
-                            batch = batch.union(ref_log_prob)
+                                # Single-agent mode: original behavior
+                                if not self.ref_in_actor:
+                                    ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
+                                else:
+                                    ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
+                                batch = batch.union(ref_log_prob)
 
                     # compute values
                     if self.use_critic:
@@ -391,6 +498,7 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
 
                     # compute global_valid tokens
                     batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
+                    batch.meta_info["temperature"] = self.config.actor_rollout_ref.rollout.get("temperature")
 
                     # update critic
                     if self.use_critic:
@@ -401,11 +509,33 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
 
                     # implement critic warmup
                     if self.config.trainer.critic_warmup <= self.global_steps:
-                        # update actor
+                        # update actor - per agent if multi-agent mode
                         with marked_timer("update_actor", timing_raw, color="red"):
-                            actor_output = self.actor_rollout_wg.update_actor(batch)
-                        actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
-                        metrics.update(actor_output_metrics)
+                            if not self.config.trainer.share_policy:
+                                # Multi-agent mode: update each agent's LoRA adapter
+                                agent_batches = self._split_batch_by_agent(batch)
+                                all_actor_metrics = {}
+
+                                for agent_name, (sub_batch, indices) in agent_batches.items():
+                                    if len(sub_batch) == 0:
+                                        continue  # Skip empty batches silently
+
+                                    # Switch to agent's LoRA adapter for update
+                                    self.actor_rollout_wg.set_active_lora(agent_role=agent_name, lora_config={})
+
+                                    # Update this agent's adapter
+                                    sub_actor_output = self.actor_rollout_wg.update_actor(sub_batch)
+
+                                    # Collect metrics with agent prefix
+                                    for key, value in reduce_metrics(sub_actor_output.meta_info.get("metrics", {})).items():
+                                        all_actor_metrics[f"actor/{agent_name}/{key.split('/')[-1]}"] = value
+
+                                metrics.update(all_actor_metrics)
+                            else:
+                                # Single-agent mode: original behavior
+                                actor_output = self.actor_rollout_wg.update_actor(batch)
+                                actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
+                                metrics.update(actor_output_metrics)
 
                     # validate
                     if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and self.global_steps % self.config.trainer.test_freq == 0:

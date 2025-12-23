@@ -1,0 +1,29 @@
+{
+  "multi_agent_math_prompts": {
+    "generator_initial": {
+      "template": "You are a math problem solver. Your task is to solve the given mathematical problem step by step. You must provide the final answer in \\boxed{{}} format\nProblem: {problem}",
+      "description": "Initial solution generation prompt for the generator agent (user message)",
+      "required_variables": ["problem"]
+    },
+    "evaluator_critique": {
+      "template": "You are a reviewing the solution above. Your task is to analyze it for correctness.\n\nImportant instructions: You must provide your verdict as \\boxed{Correct} or \\boxed{Incorrect}\n- If incorrect, add a brief comment explaining the main issue\n- Do not reveal the correct answer in your response",
+      "description": "Critique prompt for the evaluator agent to analyze solutions (user message)",
+      "required_variables": []
+    },
+    "generator_refinement": {
+      "template": "You are a math problem solver creating a new solution based on the teacher's feedback above. Your task is to solve the problem using a completely different approach.\n\nImportant instructions: You must provide the final answer in \\boxed{} format\n- Use a DIFFERENT method than your previous attempt\n- Address the issues identified in the teacher's feedback",
+      "description": "Refinement prompt for the generator agent to create new solutions with different approaches (user message)",
+      "required_variables": []
+    }
+  },
+  "metadata": {
+    "version": "1.0",
+    "created_date": "2025-08-15",
+    "description": "Centralized prompt templates for multi-agent mathematical problem solving system",
+    "usage_notes": [
+      "All templates use Python string formatting with named placeholders",
+      "The \\boxed{{}} format requires double braces due to Python string formatting",
+      "These prompts are used across rollout generation and SFT dataset preparation"
+    ]
+  }
+}

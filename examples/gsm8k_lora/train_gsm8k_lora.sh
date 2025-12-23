@@ -7,7 +7,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
 MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
 
-python3 -m examples.gsm8k_lora.train_gsm8k_lora \
+python3 -m examples.gsm8k_lora.train_gsm8k_with_lora \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=8 \
     data.val_batch_size=512 \
@@ -22,8 +22,8 @@ python3 -m examples.gsm8k_lora.train_gsm8k_lora \
     actor_rollout_ref.actor.loss_agg_mode=token-mean \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=8 \
-    actor_rollout_ref.actor.use_dynamic_bsz=False \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=20000 \
+    actor_rollout_ref.actor.use_dynamic_bsz=True \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=20480 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.clip_ratio_high=0.2 \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \

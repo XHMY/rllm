@@ -7,6 +7,7 @@ from verl.workers.rollout.replica import TokenOutput
 from rllm.engine.rollout.rollout_engine import ModelOutput, RolloutEngine
 from rllm.parser import ChatTemplateParser
 from rllm.workflows import TerminationEvent, TerminationReason
+from verl.workers.rollout.vllm_rollout.utils import VLLM_LORA_INT_ID
 
 
 class VerlEngine(RolloutEngine):
@@ -52,6 +53,12 @@ class VerlEngine(RolloutEngine):
         tools = kwargs.pop("tools", [])
         accumulate_reasoning = kwargs.pop("accumulate_reasoning", self.accumulate_reasoning)
 
+        agent_name = kwargs.pop("agent_name", None)
+        if self.config.trainer.get("share_policy"):
+            lora_int_id = None
+        else:
+            lora_int_id = self.config.trainer.get("agent_names").index(agent_name) + VLLM_LORA_INT_ID if agent_name is not None else None
+
         sampling_params = self.val_sampling_params.copy() if self.validate or validate else self.train_sampling_params.copy()
         sampling_params.update(kwargs)
 
@@ -75,7 +82,9 @@ class VerlEngine(RolloutEngine):
         if enforce_max_prompt_length and prompt_length > self.max_prompt_length:
             raise TerminationEvent(TerminationReason.MAX_PROMPT_LENGTH_EXCEEDED)
 
-        token_output: TokenOutput = await self.server_manager.generate(request_id=application_id, prompt_ids=request_prompt_ids, image_data=image_data, sampling_params=sampling_params)  # type: ignore
+        token_output: TokenOutput = await self.server_manager.generate(
+            request_id=application_id, prompt_ids=request_prompt_ids, image_data=image_data, sampling_params=sampling_params, lora_int_id=lora_int_id
+        )  # type: ignore
         completion_ids: list[int] = token_output.token_ids
 
         finish_reason = "stop"

@@ -82,3 +82,6 @@ fireworks:
 trainer:
   log_episodes: false
   episode_log_dir: logs/${trainer.project_name}/${trainer.experiment_name}
+
+ray_init:
+  include_dashboard: True
