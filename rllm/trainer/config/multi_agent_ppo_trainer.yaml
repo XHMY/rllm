@@ -34,10 +34,6 @@ actor_rollout_ref:
       lr: 5e-6
       lr_warmup_steps: 0
 
-  ref:
-    fsdp_config:
-      param_offload: True # From Source A
-
   rollout:
     # Merged settings
     mode: async            # From Source B
@@ -150,7 +146,8 @@ trainer:
   log_freq: 1
   test_freq: 10
   save_freq: 10
-  total_epochs: 2
+  # total_epochs: 2
+  total_training_steps: 300
 
 ray_init:
   include_dashboard: True

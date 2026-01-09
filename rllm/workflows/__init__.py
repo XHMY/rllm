@@ -13,6 +13,9 @@ __all__ = [
     "MultiTurnWorkflow",
     "CumulativeWorkflow",
     "TimingTrackingMixin",
+    "EvaluatorOptimizerWorkflow",
+    "EvaluationResult",
+    "VotingWorkflow",
 ]
 
 
@@ -33,4 +36,16 @@ def __getattr__(name):
         from .timing_mixin import TimingTrackingMixin as _Mixin
 
         return _Mixin
+    if name == "EvaluatorOptimizerWorkflow":
+        from .evaluator_optimizer_workflow import EvaluatorOptimizerWorkflow as _EvalOpt
+
+        return _EvalOpt
+    if name == "EvaluationResult":
+        from .evaluator_optimizer_workflow import EvaluationResult as _EvalResult
+
+        return _EvalResult
+    if name == "VotingWorkflow":
+        from .voting_workflow import VotingWorkflow as _Voting
+
+        return _Voting
     raise AttributeError(name)

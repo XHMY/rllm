@@ -16,14 +16,47 @@
       "required_variables": []
     }
   },
+  "evaluator_optimizer_prompts": {
+    "generator_initial": {
+      "template": "You are a math problem solver. Your task is to solve the given mathematical problem step by step. You must provide the final answer in \\boxed{{}} format.\n\nProblem: {problem}",
+      "description": "Initial solution generation prompt for the generator agent",
+      "required_variables": ["problem"]
+    },
+    "evaluator_critique": {
+      "template": "You are reviewing the solution above. Your task is to analyze it for correctness.\n\nImportant instructions:\n- Provide your verdict as \\boxed{Correct} or \\boxed{Incorrect}\n- If incorrect, briefly explain the main issue\n- Do not reveal the correct answer in your response",
+      "description": "Evaluation prompt for critiquing solutions",
+      "required_variables": []
+    },
+    "generator_refinement": {
+      "template": "You are a math problem solver creating a new solution based on the teacher's feedback above. Your task is to solve the problem using a completely different approach.\n\nImportant instructions:\n- You must provide the final answer in \\boxed{{}} format\n- Use a DIFFERENT method than your previous attempt\n- Address the issues identified in the teacher's feedback",
+      "description": "Refinement prompt for generator to create improved solutions",
+      "required_variables": []
+    }
+  },
+  "voting_prompts": {
+    "generator": {
+      "template": "You are a math problem solver. Your task is to solve the given mathematical problem step by step. You must provide the final answer in \\boxed{{}} format.\n\nProblem: {problem}",
+      "description": "Generation prompt for parallel math problem solving",
+      "required_variables": ["problem"]
+    },
+    "aggregator": {
+      "template": "You are an expert math reviewer. Your task is to review multiple solutions to the same problem and select the best one.\n\nProblem: {problem}\n\nSolutions to review:{solutions}\n\nInstructions:\n1. Analyze each solution for correctness and completeness\n2. Check the mathematical reasoning and final answer\n3. Select the solution number that is most likely correct\n4. Output your selection as \\boxed{{N}} where N is the solution number (1, 2, 3, etc.)\n\nYour selection:",
+      "description": "Aggregation prompt for selecting the best solution from multiple candidates",
+      "required_variables": ["problem", "solutions"]
+    }
+  },
   "metadata": {
-    "version": "1.0",
+    "version": "1.2",
     "created_date": "2025-08-15",
+    "updated_date": "2026-01-08",
     "description": "Centralized prompt templates for multi-agent mathematical problem solving system",
     "usage_notes": [
       "All templates use Python string formatting with named placeholders",
       "The \\boxed{{}} format requires double braces due to Python string formatting",
-      "These prompts are used across rollout generation and SFT dataset preparation"
+      "These prompts are used across rollout generation and SFT dataset preparation",
+      "evaluator_optimizer_prompts: Used by EvaluatorOptimizerMathWorkflow (2-agent pattern)",
+      "multi_agent_math_prompts: Used by MultiAgentMathWorkflow (3-agent pattern)",
+      "voting_prompts: Used by VotingMathWorkflow (parallel generation + aggregation pattern)"
     ]
   }
 }
