@@ -16,6 +16,8 @@ __all__ = [
     "EvaluatorOptimizerWorkflow",
     "EvaluationResult",
     "VotingWorkflow",
+    "CodeTestLoopMixin",
+    "TestRoundResult",
 ]
 
 
@@ -48,4 +50,12 @@ def __getattr__(name):
         from .voting_workflow import VotingWorkflow as _Voting
 
         return _Voting
+    if name == "CodeTestLoopMixin":
+        from .code_test_loop_mixin import CodeTestLoopMixin as _CodeTestLoop
+
+        return _CodeTestLoop
+    if name == "TestRoundResult":
+        from .code_test_loop_mixin import TestRoundResult as _TestRoundResult
+
+        return _TestRoundResult
     raise AttributeError(name)

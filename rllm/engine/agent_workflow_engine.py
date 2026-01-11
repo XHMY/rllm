@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 from tqdm import tqdm
+import json
 
 from rllm.agents.agent import Episode
 from rllm.engine.rollout import ModelOutput, RolloutEngine
@@ -157,6 +158,15 @@ class AgentWorkflowEngine:
                 state["task"] = task
                 idx_counter += 1
             rollout_idx = state["total_rollouts"]
+
+            # If task['tests'] is not valid json format, skip it
+            if "tests" in task:
+                try:
+                    _ = json.loads(task["tests"])
+                except Exception as e:
+                    logger.error(f"Task {task_id} has invalid 'tests' field: {e}. Skipping this task.")
+                    continue
+
             futures.append(self.process_task_with_retry(task, task_id, rollout_idx, **kwargs))
             state["total_rollouts"] += 1
 
