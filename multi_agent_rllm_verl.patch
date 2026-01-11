@@ -37,10 +37,31 @@ index 274259cc..3cd08b64 100644
 +            ]
 +        )
 diff --git a/verl/utils/dataset/rl_dataset.py b/verl/utils/dataset/rl_dataset.py
-index 870c4751..4667e414 100644
+index 870c4751..788b5dbe 100644
 --- a/verl/utils/dataset/rl_dataset.py
 +++ b/verl/utils/dataset/rl_dataset.py
-@@ -441,6 +441,13 @@ class RLHFDataset(Dataset):
+@@ -28,6 +28,7 @@ import torch
+ from omegaconf import DictConfig, ListConfig
+ from torch.utils.data import Dataset
+ from transformers import PreTrainedTokenizer, ProcessorMixin
++import polars as pl
+ 
+ import verl.utils.torch_functional as verl_F
+ from verl.utils.model import compute_position_id_with_mask
+@@ -153,9 +154,10 @@ class RLHFDataset(Dataset):
+         dataframes = []
+         for parquet_file in self.data_files:
+             # read parquet files and cache
+-            dataframe = datasets.load_dataset("parquet", data_files=parquet_file)["train"]
++            dataframe = pl.read_parquet(parquet_file)
+             dataframes.append(dataframe)
+-        self.dataframe: datasets.Dataset = datasets.concatenate_datasets(dataframes)
++        # Convert Polars DataFrame to HuggingFace Dataset via Arrow (zero-copy)
++        self.dataframe: datasets.Dataset = datasets.Dataset(pl.concat(dataframes).to_arrow())
+ 
+         total = len(self.dataframe)
+         print(f"dataset len: {len(self.dataframe)}")
+@@ -441,6 +443,13 @@ class RLHFDataset(Dataset):
          # add index for each prompt
          if "extra_info" not in row_dict or row_dict["extra_info"] is None:
              row_dict["extra_info"] = dict()
