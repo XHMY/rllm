@@ -63,8 +63,11 @@ class CodeTestLoopMixin:
     max_tests_to_show: int = 3
     public_test_only: bool = False
 
-    def run_tests(self, task: Dict[str, Any], code: str) -> TestRoundResult:
+    async def run_tests(self, task: Dict[str, Any], code: str) -> TestRoundResult:
         """Execute tests on code and return structured result.
+
+        Runs code evaluation in a thread pool to avoid blocking the event loop,
+        enabling parallel code evaluation across multiple workflows.
 
         Args:
             task: Task dictionary containing test cases
@@ -73,7 +76,8 @@ class CodeTestLoopMixin:
         Returns:
             TestRoundResult with test execution details and feedback
         """
-        reward_output = code_reward_fn(task, code)
+        # Run blocking code evaluation in thread pool to enable parallelism
+        reward_output = await self.run_in_executor(code_reward_fn, task, code)
 
         metadata = reward_output.metadata or {}
         test_results = metadata.get("test_results", [])

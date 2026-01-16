@@ -198,21 +198,21 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
         # Final fallback: return the first candidate
         return candidates[0] if candidates else ""
 
-    def compute_generator_reward(
+    async def compute_generator_reward(
         self,
         task: Dict[str, Any],
         response: str,
     ) -> RewardOutput:
-        """Compute reward using test execution."""
-        return code_reward_fn(task, response)
+        """Compute reward using test execution (async for parallelism)."""
+        return await self.run_in_executor(code_reward_fn, task, response)
 
-    def compute_aggregator_reward(
+    async def compute_aggregator_reward(
         self,
         task: Dict[str, Any],
         selected_response: str,
     ) -> RewardOutput:
-        """Compute reward for aggregator based on selected solution."""
-        return code_reward_fn(task, selected_response)
+        """Compute reward for aggregator based on selected solution (async for parallelism)."""
+        return await self.run_in_executor(code_reward_fn, task, selected_response)
 
     # ===== Workflow execution =====
 
@@ -435,8 +435,8 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
             )
             all_trajectories.append(aggregator_trajectory)
 
-            # Step 3: Run tests on selected solution
-            test_result = self.run_tests(task, selected_response)
+            # Step 3: Run tests on selected solution (async for parallelism)
+            test_result = await self.run_tests(task, selected_response)
             final_test_result = test_result
 
             if test_result.all_passed:
@@ -450,23 +450,33 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
         test_passed = final_test_result.all_passed if final_test_result else False
         final_reward = 1.0 if test_passed else 0.0
 
-        # Compute individual generator rewards for metrics
+        # Compute individual generator rewards for metrics (in parallel for speed)
         generator_correct_count = 0
         total_generator_trajs = 0
 
-        for traj in all_trajectories:
-            if traj.name == self.GENERATOR_NAME:
-                # Generator reward based on individual test result
-                gen_reward = self.compute_generator_reward(task, traj.steps[0].action)
+        # Collect generator trajectories for parallel reward computation
+        generator_trajs = [t for t in all_trajectories if t.name == self.GENERATOR_NAME]
+        aggregator_trajs = [t for t in all_trajectories if t.name == self.AGGREGATOR_NAME]
+
+        # Compute generator rewards in parallel
+        if generator_trajs:
+            gen_reward_tasks = [
+                self.compute_generator_reward(task, traj.steps[0].action)
+                for traj in generator_trajs
+            ]
+            gen_rewards = await asyncio.gather(*gen_reward_tasks)
+
+            for traj, gen_reward in zip(generator_trajs, gen_rewards):
                 traj.steps[0].reward = gen_reward.reward
                 traj.reward = gen_reward.reward
                 if gen_reward.is_correct:
                     generator_correct_count += 1
                 total_generator_trajs += 1
-            elif traj.name == self.AGGREGATOR_NAME:
-                # Aggregator reward based on final test result
-                traj.steps[0].reward = final_reward
-                traj.reward = final_reward
+
+        # Assign aggregator rewards
+        for traj in aggregator_trajs:
+            traj.steps[0].reward = final_reward
+            traj.reward = final_reward
 
         # Compute metrics
         n_aggregator_trajs = sum(

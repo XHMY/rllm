@@ -195,8 +195,8 @@ class SingleAgentDeepcodeWorkflow(CodeTestLoopMixin, Workflow):
 
         code = output.content or output.text or ""
 
-        # Compute reward from test execution
-        reward_output = code_reward_fn(task, code)
+        # Compute reward from test execution (run in thread pool for parallelism)
+        reward_output = await self.run_in_executor(code_reward_fn, task, code)
         reward = reward_output.reward
         is_correct = reward_output.is_correct
 
@@ -269,8 +269,8 @@ class SingleAgentDeepcodeWorkflow(CodeTestLoopMixin, Workflow):
             )
             all_trajectories.append(trajectory)
 
-            # Run tests
-            test_result = self.run_tests(task, code)
+            # Run tests (async to enable parallel evaluation)
+            test_result = await self.run_tests(task, code)
             final_test_result = test_result
 
             if test_result.all_passed:

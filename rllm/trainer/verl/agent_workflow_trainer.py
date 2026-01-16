@@ -1,5 +1,7 @@
 import asyncio
 import math
+import os
+import shutil
 import threading
 import uuid
 from collections import Counter, defaultdict
@@ -998,6 +1000,50 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
         non_pad_step_indices = np.where(is_pad_step == False)[0]
         batch = batch.select_idxs(non_pad_step_indices)  # This batch only has non_pad steps
         return batch
+
+    def _save_checkpoint(self):
+        """
+        Override parent checkpoint saving to handle multi-agent LoRA adapters.
+
+        In multi-agent mode (share_policy=False), each agent has its own LoRA adapter.
+        The parent class only saves the "default" adapter, so we need to:
+        1. Call parent to save the full model checkpoint
+        2. Remove the default lora_adapter directory
+        3. Save each agent's LoRA adapter to its own directory
+        """
+        # Call parent to save the full model checkpoint (including all adapters in model_*.pt)
+        super()._save_checkpoint()
+
+        # If not multi-agent mode, the parent's save is sufficient
+        if self.config.trainer.share_policy:
+            return
+
+        # Get the checkpoint path
+        local_global_step_folder = os.path.join(
+            self.config.trainer.default_local_dir, f"global_step_{self.global_steps}"
+        )
+        actor_local_path = os.path.join(local_global_step_folder, "actor")
+        default_lora_path = os.path.join(actor_local_path, "lora_adapter")
+
+        # Remove the default lora_adapter directory (it only contains "default" adapter)
+        if os.path.exists(default_lora_path):
+            shutil.rmtree(default_lora_path)
+            print(f"Removed default lora_adapter directory: {default_lora_path}")
+
+        # Save each agent's LoRA adapter to its own directory
+        agent_names = self.config.trainer.get("agent_names", [])
+        if not agent_names:
+            print("Warning: share_policy=False but no agent_names configured, skipping multi-agent LoRA save")
+            return
+
+        for agent_name in agent_names:
+            agent_lora_path = os.path.join(actor_local_path, f"lora_adapter_{agent_name}")
+            self.actor_rollout_wg.save_single_lora_adapter(
+                agent_name=agent_name,
+                save_path=agent_lora_path,
+                global_step=self.global_steps,
+            )
+            print(f"Saved LoRA adapter for agent '{agent_name}' to: {agent_lora_path}")
 
     def shutdown(self):
         """A cleanup method to gracefully stop the background event loop."""

@@ -30,12 +30,12 @@ class TerminationEvent(Exception):
 
 
 class Workflow(ABC):
-    def __init__(self, rollout_engine: RolloutEngine, executor: ThreadPoolExecutor, timeout=1e6, gamma=0.0, reward_bonus_coeff=0.0, **kwargs):
+    def __init__(self, rollout_engine: RolloutEngine, executor: ThreadPoolExecutor = None, timeout=1e6, gamma=0.0, reward_bonus_coeff=0.0, **kwargs):
         """Initialize the Workflow.
 
         Args:
             rollout_engine: The rollout engine to use.
-            executor: The executor to use.
+            executor: The executor to use (optional, only needed for run_in_executor).
             timeout: The timeout for the workflow.
             gamma: The discount factor for the workflow.
             reward_bonus_coeff: The reward bonus coefficient for the workflow.
@@ -282,6 +282,14 @@ class Workflow(ABC):
             fn: The function to run.
             *args: The arguments to pass to the function.
             **kwargs: The keyword arguments to pass to the function.
+
+        Raises:
+            ValueError: If executor was not provided during initialization.
         """
+        if self.executor is None:
+            raise ValueError(
+                "Cannot use run_in_executor: no executor was provided during Workflow initialization. "
+                "Pass an executor to the Workflow constructor if you need to run functions in a thread pool."
+            )
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self.executor, partial(fn, *args, **kwargs))
