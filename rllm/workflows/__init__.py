@@ -18,6 +18,10 @@ __all__ = [
     "VotingWorkflow",
     "CodeTestLoopMixin",
     "TestRoundResult",
+    # Environment-based workflows (generic, work with any agent/env)
+    "EnvSingleAgentWorkflow",
+    "EnvEvaluatorOptimizerWorkflow",
+    "ActionEvaluation",
 ]
 
 
@@ -58,4 +62,16 @@ def __getattr__(name):
         from .code_test_loop_mixin import TestRoundResult as _TestRoundResult
 
         return _TestRoundResult
+    if name == "EnvSingleAgentWorkflow":
+        from .env_single_agent_workflow import EnvSingleAgentWorkflow as _EnvSingle
+
+        return _EnvSingle
+    if name == "EnvEvaluatorOptimizerWorkflow":
+        from .env_evaluator_optimizer_workflow import EnvEvaluatorOptimizerWorkflow as _EnvEvalOpt
+
+        return _EnvEvalOpt
+    if name == "ActionEvaluation":
+        from .env_evaluator_optimizer_workflow import ActionEvaluation as _ActionEval
+
+        return _ActionEval
     raise AttributeError(name)
