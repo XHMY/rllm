@@ -8,7 +8,7 @@ def prepare_math_data():
     def preprocess_fn(example, idx):
         return {
             "question": example["problem"],
-            "ground_truth": example["answer"],
+            "final_answer": example["answer"],
             "data_source": "math",
         }
 

@@ -142,7 +142,7 @@ trainer:
   share_policy: False
   lora_adapter_path: '/tmp/rllm_tmp_lora'
   ori_single_policy_no_lora_mode: False
-  val_before_train: False
+  val_before_train: True
   log_freq: 1
   test_freq: 10
   save_freq: 10

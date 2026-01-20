@@ -9,7 +9,7 @@ from rllm.trainer.agent_trainer import AgentTrainer
 @hydra.main(config_path="pkg://rllm.trainer.config", config_name="multi_agent_ppo_trainer", version_base=None)
 def main(config):
     train_dataset = DatasetRegistry.load_dataset("dapo_math", "train")
-    test_dataset = DatasetRegistry.load_dataset("dapo_math", "test")
+    test_dataset = DatasetRegistry.load_dataset("aime2025", "test")
 
     assert train_dataset is not None, (
         "Failed to load train dataset. "
@@ -17,7 +17,7 @@ def main(config):
     )
     assert test_dataset is not None, (
         "Failed to load test dataset. "
-        "Please run examples/math_reasoning/prepare_dapo_math_data.py first."
+        "Please run examples/math_reasoning/prepare_aime_test_data.py first."
     )
 
     trainer = AgentTrainer(
