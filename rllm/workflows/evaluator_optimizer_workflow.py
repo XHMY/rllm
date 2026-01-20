@@ -79,6 +79,7 @@ class EvaluatorOptimizerWorkflow(Workflow):
         rollout_engine: RolloutEngine,
         max_iterations: int = 3,
         share_conversation_history: bool = True,
+        use_final_outcome_reward: bool = False,
         **kwargs,
     ):
         """Initialize the EvaluatorOptimizerWorkflow.
@@ -88,11 +89,15 @@ class EvaluatorOptimizerWorkflow(Workflow):
             max_iterations: Maximum number of evaluation-refinement cycles
             share_conversation_history: Whether to pass full conversation history
                 to evaluator and generator during refinement
+            use_final_outcome_reward: If True, assign the final outcome reward to
+                ALL trajectories in the episode. This tests whether multi-agent
+                training can converge without fine-grained per-agent reward feedback.
             **kwargs: Additional arguments passed to parent Workflow
         """
         super().__init__(rollout_engine, **kwargs)
         self.max_iterations = max_iterations
         self.share_conversation_history = share_conversation_history
+        self.use_final_outcome_reward = use_final_outcome_reward
 
     # ===== Abstract methods that subclasses MUST implement =====
 
@@ -415,6 +420,15 @@ class EvaluatorOptimizerWorkflow(Workflow):
         # Compute final metrics
         final_reward = self.compute_generator_reward(task, current_response)
         final_is_correct = final_reward.is_correct
+
+        # If use_final_outcome_reward is enabled, propagate the final reward
+        # to all trajectories (both generator and evaluator, all iterations)
+        if self.use_final_outcome_reward:
+            final_reward_value = final_reward.reward
+            for trajectory in all_trajectories:
+                trajectory.reward = final_reward_value
+                for step in trajectory.steps:
+                    step.reward = final_reward_value
 
         metrics = self._compute_workflow_metrics(
             all_trajectories,

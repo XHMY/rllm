@@ -45,6 +45,7 @@ class EvaluatorOptimizerMathWorkflow(EvaluatorOptimizerWorkflow):
         prompts: Dict[str, Any] = None,
         prompt_file: str = "examples/math_reasoning/prompt.json",
         max_iterations: int = 3,
+        use_final_outcome_reward: bool = False,
         **kwargs,
     ):
         """Initialize the math evaluator-optimizer workflow.
@@ -55,12 +56,16 @@ class EvaluatorOptimizerMathWorkflow(EvaluatorOptimizerWorkflow):
             prompts: Optional pre-loaded prompt templates
             prompt_file: Path to JSON file with prompt templates
             max_iterations: Maximum evaluation-refinement cycles
+            use_final_outcome_reward: If True, assign the final outcome reward to
+                ALL trajectories. Useful for testing multi-agent training without
+                fine-grained per-agent reward feedback.
             **kwargs: Additional arguments passed to parent workflow
         """
         super().__init__(
             rollout_engine=rollout_engine,
             max_iterations=max_iterations,
             share_conversation_history=True,
+            use_final_outcome_reward=use_final_outcome_reward,
             **kwargs,
         )
         self.reward_function = reward_function

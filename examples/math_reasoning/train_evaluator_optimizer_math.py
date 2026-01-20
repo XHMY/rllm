@@ -37,16 +37,21 @@ def main(config):
         "Please run examples/math_reasoning/prepare_dapo_math_data.py first."
     )
 
-    # Get max_iterations from config if specified, default to 3
+    # Get workflow config options
     max_iterations = 3
+    use_final_outcome_reward = False
     if hasattr(config, "rllm") and hasattr(config.rllm, "workflow"):
         max_iterations = getattr(config.rllm.workflow, "max_iterations", 3)
+        use_final_outcome_reward = getattr(
+            config.rllm.workflow, "use_final_outcome_reward", False
+        )
 
     trainer = AgentTrainer(
         workflow_class=EvaluatorOptimizerMathWorkflow,
         workflow_args={
             "max_iterations": max_iterations,
             "reward_function": math_reward_fn,
+            "use_final_outcome_reward": use_final_outcome_reward,
         },
         config=config,
         train_dataset=train_dataset,
