@@ -31,7 +31,7 @@ actor_rollout_ref:
       optimizer_offload: False
     ppo_epochs: 1
     optim:
-      lr: 5e-6
+      lr: 2e-5
       lr_warmup_steps: 0
 
   rollout:

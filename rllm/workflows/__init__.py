@@ -22,6 +22,10 @@ __all__ = [
     "EnvSingleAgentWorkflow",
     "EnvEvaluatorOptimizerWorkflow",
     "ActionEvaluation",
+    # Orchestrator-workers workflow
+    "OrchestratorWorkersWorkflow",
+    "SubtaskResult",
+    "DecompositionResult",
 ]
 
 
@@ -74,4 +78,16 @@ def __getattr__(name):
         from .env_evaluator_optimizer_workflow import ActionEvaluation as _ActionEval
 
         return _ActionEval
+    if name == "OrchestratorWorkersWorkflow":
+        from .orchestrator_workers_workflow import OrchestratorWorkersWorkflow as _OrchWorkers
+
+        return _OrchWorkers
+    if name == "SubtaskResult":
+        from .orchestrator_workers_workflow import SubtaskResult as _SubtaskResult
+
+        return _SubtaskResult
+    if name == "DecompositionResult":
+        from .orchestrator_workers_workflow import DecompositionResult as _DecompResult
+
+        return _DecompResult
     raise AttributeError(name)

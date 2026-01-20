@@ -45,10 +45,27 @@
       "required_variables": ["problem", "solutions"]
     }
   },
+  "orchestrator_workers_prompts": {
+    "orchestrator_decompose": {
+      "template": "You are a math problem-solving coordinator. Your task is to analyze the following complex math problem and break it down into at most {max_subtasks} simpler subproblems that can be solved independently.\n\nProblem: {problem}\n\nInstructions:\n1. Identify the key components or steps needed to solve this problem\n2. Break it down into at most {max_subtasks} independent subproblems\n3. Each subproblem should be self-contained and solvable on its own\n4. Format your response as:\n   SUBTASK 1: [description of first subproblem]\n   SUBTASK 2: [description of second subproblem]\n   (and so on, up to {max_subtasks} subtasks maximum)\n\nDecompose the problem now:",
+      "description": "Decomposition prompt for orchestrator to break down complex problems",
+      "required_variables": ["problem", "max_subtasks"]
+    },
+    "worker_solve": {
+      "template": "You are a math problem solver working on a specific part of a larger problem.\n\nOriginal problem context: {context}\n\nYour assigned subproblem: {subtask}\n\nInstructions:\n1. Solve this specific subproblem step by step\n2. Show your work clearly\n3. Provide your answer in \\boxed{{}} format\n\nSolve the subproblem:",
+      "description": "Worker prompt for solving individual subproblems",
+      "required_variables": ["context", "subtask"]
+    },
+    "orchestrator_synthesize": {
+      "template": "You are a math problem-solving coordinator. Your task is to synthesize the solutions from multiple subproblems into a final answer.\n\nOriginal problem: {problem}\n\nSubproblem solutions:{solutions}\n\nInstructions:\n1. Review all subproblem solutions\n2. Combine them logically to solve the original problem\n3. Verify the final answer makes sense\n4. Provide the final answer in \\boxed{{}} format\n\nSynthesize the final answer:",
+      "description": "Synthesis prompt for orchestrator to combine subproblem solutions",
+      "required_variables": ["problem", "solutions"]
+    }
+  },
   "metadata": {
-    "version": "1.2",
+    "version": "1.3",
     "created_date": "2025-08-15",
-    "updated_date": "2026-01-08",
+    "updated_date": "2026-01-19",
     "description": "Centralized prompt templates for multi-agent mathematical problem solving system",
     "usage_notes": [
       "All templates use Python string formatting with named placeholders",
@@ -56,7 +73,8 @@
       "These prompts are used across rollout generation and SFT dataset preparation",
       "evaluator_optimizer_prompts: Used by EvaluatorOptimizerMathWorkflow (2-agent pattern)",
       "multi_agent_math_prompts: Used by MultiAgentMathWorkflow (3-agent pattern)",
-      "voting_prompts: Used by VotingMathWorkflow (parallel generation + aggregation pattern)"
+      "voting_prompts: Used by VotingMathWorkflow (parallel generation + aggregation pattern)",
+      "orchestrator_workers_prompts: Used by OrchestratorWorkersMathWorkflow (task decomposition pattern)"
     ]
   }
 }
