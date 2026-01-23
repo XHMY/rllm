@@ -24,7 +24,7 @@ from rllm.trainer.agent_trainer import AgentTrainer
 )
 def main(config):
     train_dataset = DatasetRegistry.load_dataset("dapo_math", "train")
-    test_dataset = DatasetRegistry.load_dataset("dapo_math", "test")
+    test_dataset = DatasetRegistry.load_dataset("aime2025", "test")
 
     assert train_dataset is not None, (
         "Failed to load train dataset. "

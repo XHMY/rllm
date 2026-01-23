@@ -14,8 +14,10 @@ python3 -m examples.math_reasoning.train_single_agent_math \
     data.max_response_length=5120 \
     actor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=20480 \
+    actor_rollout_ref.rollout.n=32 \
+    actor_rollout_ref.actor.ppo_epochs=4 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    trainer.experiment_name='qwen3_0.6b-math_single_agent' \
+    trainer.experiment_name='qwen3_0.6b-math_single_agent-n32pe4' \
     trainer.n_gpus_per_node=4 \
     trainer.share_policy=True
 
