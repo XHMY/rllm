@@ -3,24 +3,50 @@
 This script evaluates all math-related checkpoints using a simplified vLLM pipeline
 with native data parallelism and dynamic LoRA loading.
 
-Usage:
-    python -m examples.math_reasoning.evaluate_checkpoints \
-        --checkpoints-dir /path/to/checkpoints/rllm-workflow-MARL \
-        --output-csv aime2025_eval_results.csv \
-        --dataset aime2025
+Supports three evaluation modes:
+1. trained_checkpoint: Evaluate checkpoints with their trained LoRA adapters
+2. base_model: Evaluate workflows using base model only (no LoRA)
+3. single_agent_transfer: Use a single-agent checkpoint's LoRA for ALL agents
+
+Usage Examples:
+
+    # Case 1: Trained checkpoints (last checkpoint only)
+    python -m examples.math_reasoning.evaluate_checkpoints \\
+        --eval-mode trained_checkpoint \\
+        --checkpoints-dir /path/to/checkpoints \\
+        --last-checkpoint-only \\
+        --output-json eval_results.jsonl
+
+    # Case 2: Base model only
+    python -m examples.math_reasoning.evaluate_checkpoints \\
+        --eval-mode base_model \\
+        --base-model Qwen/Qwen3-0.6B \\
+        --workflow-types voting evaluator_optimizer orchestrator_workers \\
+        --output-json eval_results.jsonl
+
+    # Case 3: Single-agent transfer
+    python -m examples.math_reasoning.evaluate_checkpoints \\
+        --eval-mode single_agent_transfer \\
+        --base-model Qwen/Qwen3-0.6B \\
+        --single-agent-lora-path /path/to/checkpoint/actor/lora_adapter \\
+        --workflow-types voting evaluator_optimizer orchestrator_workers \\
+        --output-json eval_results.jsonl
 """
 
 import argparse
 import asyncio
-import csv
+import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +57,9 @@ from transformers import AutoTokenizer
 from examples.math_reasoning.evaluator_optimizer_math_workflow import (
     EvaluatorOptimizerMathWorkflow,
 )
+from examples.math_reasoning.orchestrator_workers_math_workflow import (
+    OrchestratorWorkersMathWorkflow,
+)
 from examples.math_reasoning.single_agent_math_workflow import SingleAgentMathWorkflow
 from examples.math_reasoning.voting_math_workflow import VotingMathWorkflow
 from rllm.agents.agent import Episode
@@ -38,6 +67,20 @@ from rllm.data.dataset import DatasetRegistry
 from rllm.engine.rollout.openai_engine import OpenAIEngine
 from rllm.engine.rollout.rollout_engine import ModelOutput
 from rllm.rewards.reward_fn import math_reward_fn
+
+os.environ["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
+
+# ============================================================================
+# Enums
+# ============================================================================
+
+
+class EvalMode(Enum):
+    """Evaluation mode for checkpoint evaluation."""
+
+    TRAINED_CHECKPOINT = "trained_checkpoint"  # Evaluate with trained LoRA adapters
+    BASE_MODEL = "base_model"  # Evaluate using base model only (no LoRA)
+    SINGLE_AGENT_TRANSFER = "single_agent_transfer"  # Use single-agent LoRA for all agents
 
 
 # ============================================================================
@@ -71,21 +114,37 @@ class EvalResult:
     num_correct: int
     num_total: int
     eval_duration_seconds: float
+    eval_mode: str = "trained_checkpoint"  # Which evaluation mode was used
     problem_results: list[dict] = field(default_factory=list)
+    hostname: str = field(default_factory=lambda: socket.gethostname())
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
-    def to_csv_row(self) -> dict:
-        """Convert to dictionary for CSV export."""
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON export."""
         return {
+            "timestamp": self.timestamp,
+            "hostname": self.hostname,
             "experiment_name": self.experiment_name,
             "checkpoint_step": self.checkpoint_step,
             "workflow_type": self.workflow_type,
             "model_size": self.model_size,
             "share_policy": self.share_policy,
-            "accuracy": f"{self.accuracy:.4f}",
+            "accuracy": round(self.accuracy, 4),
             "num_correct": self.num_correct,
             "num_total": self.num_total,
-            "eval_duration_seconds": f"{self.eval_duration_seconds:.1f}",
+            "eval_duration_seconds": round(self.eval_duration_seconds, 1),
+            "eval_mode": self.eval_mode,
         }
+
+
+@dataclass
+class EvalConfig:
+    """Configuration for evaluation mode."""
+
+    mode: EvalMode
+    base_model: str = None  # Required for base_model and single_agent_transfer modes
+    workflow_types: list[str] = None  # Workflow types to evaluate
+    single_agent_lora_path: str = None  # Path to single-agent LoRA for transfer mode
 
 
 # ============================================================================
@@ -96,6 +155,7 @@ WORKFLOW_MAP = {
     "single_agent": SingleAgentMathWorkflow,
     "evaluator_optimizer": EvaluatorOptimizerMathWorkflow,
     "voting": VotingMathWorkflow,
+    "orchestrator_workers": OrchestratorWorkersMathWorkflow,
 }
 
 MODEL_MAP = {
@@ -108,6 +168,7 @@ AGENT_NAMES_MAP = {
     "single_agent": ["generator"],
     "evaluator_optimizer": ["generator", "evaluator"],
     "voting": ["generator", "aggregator"],
+    "orchestrator_workers": ["orchestrator", "worker"],
 }
 
 
@@ -117,19 +178,25 @@ AGENT_NAMES_MAP = {
 
 
 def parse_experiment_name(experiment_name: str) -> dict | None:
-    """Parse experiment name to extract workflow type, model size, and share_policy."""
-    share_policy = "share_policy" in experiment_name
+    """Parse experiment name to extract workflow type, model size, and share_policy.
 
-    workflow_types = ["single_agent", "evaluator_optimizer", "voting"]
+    Handles various naming conventions:
+    - Standard: "evaluator_optimizer-qwen3_0.6b-math"
+    - Share policy: "evaluator_optimizer-qwen3_0.6b-share_policy-math"
+    - Alternative: "qwen3_0.6b-math_single_agent"
+    """
+    # Check for workflow type - can be at start or elsewhere in the name
+    workflow_types = ["single_agent", "evaluator_optimizer", "voting", "orchestrator_workers"]
     workflow_type = None
     for wt in workflow_types:
-        if experiment_name.startswith(wt):
+        if wt in experiment_name:
             workflow_type = wt
             break
 
     if workflow_type is None:
         return None
 
+    # Extract model size
     model_size_match = re.search(r"qwen3_(\d+\.?\d*b)", experiment_name, re.IGNORECASE)
     if model_size_match:
         model_size = model_size_match.group(1).lower()
@@ -139,6 +206,11 @@ def parse_experiment_name(experiment_name: str) -> dict | None:
     base_model = MODEL_MAP.get(model_size)
     if base_model is None:
         return None
+
+    # Determine if share_policy mode:
+    # - Explicit "share_policy" in name
+    # - OR single_agent workflow (only has one agent, so effectively share_policy)
+    share_policy = "share_policy" in experiment_name or workflow_type == "single_agent"
 
     return {
         "workflow_type": workflow_type,
@@ -245,6 +317,87 @@ def group_checkpoints_by_model(
     return dict(grouped)
 
 
+def filter_last_checkpoints(checkpoints: list[CheckpointInfo]) -> list[CheckpointInfo]:
+    """Keep only the last (highest step) checkpoint per experiment.
+
+    Args:
+        checkpoints: List of checkpoint info objects.
+
+    Returns:
+        Filtered list with only the highest step checkpoint per experiment.
+    """
+    last_by_experiment = {}
+    for cp in checkpoints:
+        if cp.experiment_name not in last_by_experiment:
+            last_by_experiment[cp.experiment_name] = cp
+        elif cp.checkpoint_step > last_by_experiment[cp.experiment_name].checkpoint_step:
+            last_by_experiment[cp.experiment_name] = cp
+    return list(last_by_experiment.values())
+
+
+def extract_model_size(base_model: str) -> str:
+    """Extract model size from base model path.
+
+    Args:
+        base_model: Model path like "Qwen/Qwen3-0.6B" or "Qwen/Qwen3-1.7B".
+
+    Returns:
+        Model size string like "0.6b" or "1.7b".
+    """
+    match = re.search(r"(\d+\.?\d*)[Bb]", base_model)
+    if match:
+        return match.group(1).lower() + "b"
+    return "unknown"
+
+
+def create_synthetic_checkpoints(eval_config: EvalConfig) -> list[CheckpointInfo]:
+    """Create synthetic CheckpointInfo objects for base_model and single_agent_transfer modes.
+
+    Args:
+        eval_config: Evaluation configuration with mode, base_model, and workflow_types.
+
+    Returns:
+        List of synthetic CheckpointInfo objects (one per workflow type).
+    """
+    if eval_config.base_model is None:
+        raise ValueError("base_model is required for base_model and single_agent_transfer modes")
+
+    if eval_config.workflow_types is None:
+        raise ValueError("workflow_types is required for base_model and single_agent_transfer modes")
+
+    model_size = extract_model_size(eval_config.base_model)
+    checkpoints = []
+
+    for workflow_type in eval_config.workflow_types:
+        if workflow_type not in WORKFLOW_MAP:
+            print(f"Warning: Unknown workflow type: {workflow_type}")
+            continue
+
+        # Create experiment name based on mode
+        if eval_config.mode == EvalMode.BASE_MODEL:
+            experiment_name = f"{workflow_type}-qwen3_{model_size}-base_model"
+            actor_path = None  # No LoRA path for base model
+            share_policy = True  # Doesn't matter for base model
+        else:  # SINGLE_AGENT_TRANSFER
+            experiment_name = f"{workflow_type}-qwen3_{model_size}-single_agent_transfer"
+            actor_path = eval_config.single_agent_lora_path
+            share_policy = True  # Transfer uses single LoRA for all agents
+
+        checkpoints.append(
+            CheckpointInfo(
+                experiment_name=experiment_name,
+                workflow_type=workflow_type,
+                model_size=model_size,
+                base_model=eval_config.base_model,
+                checkpoint_step=0,  # Synthetic checkpoints have step 0
+                actor_path=actor_path,
+                share_policy=share_policy,
+            )
+        )
+
+    return checkpoints
+
+
 # ============================================================================
 # vLLM Server Management
 # ============================================================================
@@ -263,12 +416,14 @@ class VLLMServerManager:
         max_loras: int = 8,
         max_lora_rank: int = 64,
         max_model_len: int = None,
+        enable_lora: bool = True,
     ):
         self.model = model
         self.port = port
         self.base_url = f"http://localhost:{port}"
         self.process = None
         self.loaded_loras: set[str] = set()
+        self.enable_lora = enable_lora
         self.config = {
             "tensor_parallel_size": tensor_parallel_size,
             "data_parallel_size": data_parallel_size,
@@ -279,18 +434,23 @@ class VLLMServerManager:
         }
 
     def start(self):
-        """Start vLLM server with LoRA support."""
+        """Start vLLM server with optional LoRA support."""
         cmd = [
             sys.executable, "-m", "vllm.entrypoints.openai.api_server",
             "--model", self.model,
-            "--enable-lora",
-            "--max-loras", str(self.config["max_loras"]),
-            "--max-lora-rank", str(self.config["max_lora_rank"]),
             "--tensor-parallel-size", str(self.config["tensor_parallel_size"]),
             "--gpu-memory-utilization", str(self.config["gpu_memory_utilization"]),
             "--port", str(self.port),
             "--trust-remote-code",
         ]
+
+        # Add LoRA flags only if LoRA is enabled
+        if self.enable_lora:
+            cmd.extend([
+                "--enable-lora",
+                "--max-loras", str(self.config["max_loras"]),
+                "--max-lora-rank", str(self.config["max_lora_rank"]),
+            ])
 
         # Add data parallel size if > 1
         if self.config["data_parallel_size"] > 1:
@@ -335,6 +495,10 @@ class VLLMServerManager:
 
     def load_lora(self, lora_name: str, lora_path: str):
         """Load LoRA adapter dynamically."""
+        if not self.enable_lora:
+            print(f"Warning: LoRA is disabled, skipping load of {lora_name}")
+            return
+
         if lora_name in self.loaded_loras:
             print(f"LoRA adapter already loaded: {lora_name}")
             return
@@ -352,7 +516,7 @@ class VLLMServerManager:
 
     def unload_lora(self, lora_name: str):
         """Unload LoRA adapter."""
-        if lora_name not in self.loaded_loras:
+        if not self.enable_lora or lora_name not in self.loaded_loras:
             return
 
         try:
@@ -445,39 +609,56 @@ class LoRAOpenAIEngine(OpenAIEngine):
 # ============================================================================
 
 
-async def evaluate_checkpoint(
+def setup_lora_for_eval(
     checkpoint: CheckpointInfo,
-    server: VLLMServerManager,
-    engine: LoRAOpenAIEngine,
-    dataset: list[dict],
-    n_parallel: int = 32,
-) -> EvalResult:
-    """Evaluate a single checkpoint on the dataset."""
-    print(f"\n{'='*60}")
-    print(f"Evaluating: {checkpoint.experiment_name} step {checkpoint.checkpoint_step}")
-    print(f"  Workflow: {checkpoint.workflow_type}")
-    print(f"  Actor Path: {checkpoint.actor_path}")
-    print(f"  Share Policy: {checkpoint.share_policy}")
-    print(f"{'='*60}")
+    server: "VLLMServerManager",
+    engine: "LoRAOpenAIEngine",
+    eval_mode: EvalMode,
+    single_agent_lora_path: str = None,
+) -> None:
+    """Set up LoRA adapters for evaluation based on mode.
 
-    start_time = time.time()
-
-    # Load LoRA adapter(s) for this checkpoint
-    # lora_prefix creates unique names for vLLM when loading multiple checkpoints
+    Args:
+        checkpoint: Checkpoint information.
+        server: vLLM server manager for loading LoRA adapters.
+        engine: LoRA-aware OpenAI engine.
+        eval_mode: Evaluation mode (trained_checkpoint, base_model, single_agent_transfer).
+        single_agent_lora_path: Path to single-agent LoRA for transfer mode.
+    """
     lora_prefix = f"{checkpoint.experiment_name}_step{checkpoint.checkpoint_step}"
+    agent_names = AGENT_NAMES_MAP.get(checkpoint.workflow_type, ["generator"])
 
+    if eval_mode == EvalMode.BASE_MODEL:
+        # Base model mode: no LoRA adapters, use base model for all agents
+        engine.set_lora_names({})
+        print(f"Using base model for evaluation (no LoRA)")
+        return
+
+    if eval_mode == EvalMode.SINGLE_AGENT_TRANSFER:
+        # Single-agent transfer: load one LoRA and map all agents to it
+        if not single_agent_lora_path:
+            raise ValueError("single_agent_lora_path is required for SINGLE_AGENT_TRANSFER mode")
+
+        lora_name = f"{lora_prefix}_transfer"
+        server.load_lora(lora_name, single_agent_lora_path)
+
+        # Map all agents to the same single-agent LoRA
+        lora_mapping = {agent: lora_name for agent in agent_names}
+        engine.set_lora_names(lora_mapping)
+        print(f"Using single-agent transfer LoRA for all agents: {single_agent_lora_path}")
+        return
+
+    # TRAINED_CHECKPOINT mode: use trained LoRA adapters
     if checkpoint.share_policy:
         # Single shared adapter at lora_adapter/
         lora_name = f"{lora_prefix}_shared"
         lora_path = os.path.join(checkpoint.actor_path, "lora_adapter")
         server.load_lora(lora_name, lora_path)
         # Map all agent names to the same shared adapter
-        agent_names = AGENT_NAMES_MAP.get(checkpoint.workflow_type, ["generator"])
         lora_mapping = {agent: lora_name for agent in agent_names}
         engine.set_lora_names(lora_mapping)
     else:
         # Per-agent adapters at lora_adapter_{agent_name}/
-        agent_names = AGENT_NAMES_MAP.get(checkpoint.workflow_type, ["generator"])
         lora_mapping = {}
         for agent_name in agent_names:
             lora_name = f"{lora_prefix}_{agent_name}"
@@ -493,6 +674,49 @@ async def evaluate_checkpoint(
 
         engine.set_lora_names(lora_mapping)
 
+
+async def evaluate_checkpoint(
+    checkpoint: CheckpointInfo,
+    server: VLLMServerManager,
+    engine: LoRAOpenAIEngine,
+    dataset: list[dict],
+    n_parallel: int = 32,
+    eval_mode: EvalMode = EvalMode.TRAINED_CHECKPOINT,
+    single_agent_lora_path: str = None,
+) -> EvalResult:
+    """Evaluate a single checkpoint on the dataset.
+
+    Args:
+        checkpoint: Checkpoint information.
+        server: vLLM server manager.
+        engine: LoRA-aware OpenAI engine.
+        dataset: List of tasks to evaluate.
+        n_parallel: Number of parallel workflow instances.
+        eval_mode: Evaluation mode (trained_checkpoint, base_model, single_agent_transfer).
+        single_agent_lora_path: Path to single-agent LoRA for transfer mode.
+
+    Returns:
+        EvalResult with accuracy and metrics.
+    """
+    print(f"\n{'='*60}")
+    print(f"Evaluating: {checkpoint.experiment_name} step {checkpoint.checkpoint_step}")
+    print(f"  Workflow: {checkpoint.workflow_type}")
+    print(f"  Actor Path: {checkpoint.actor_path}")
+    print(f"  Share Policy: {checkpoint.share_policy}")
+    print(f"  Eval Mode: {eval_mode.value}")
+    print(f"{'='*60}")
+
+    start_time = time.time()
+
+    # Set up LoRA adapters based on evaluation mode
+    setup_lora_for_eval(
+        checkpoint=checkpoint,
+        server=server,
+        engine=engine,
+        eval_mode=eval_mode,
+        single_agent_lora_path=single_agent_lora_path,
+    )
+
     # Get workflow class and kwargs
     workflow_cls = WORKFLOW_MAP.get(checkpoint.workflow_type)
     if workflow_cls is None:
@@ -503,6 +727,8 @@ async def evaluate_checkpoint(
         workflow_kwargs["n_votes"] = 3
     if checkpoint.workflow_type == "evaluator_optimizer":
         workflow_kwargs["max_iterations"] = 3
+    if checkpoint.workflow_type == "orchestrator_workers":
+        workflow_kwargs["max_subtasks"] = 3
 
     # Run parallel evaluation with semaphore
     semaphore = asyncio.Semaphore(n_parallel)
@@ -564,43 +790,34 @@ async def evaluate_checkpoint(
         num_correct=num_correct,
         num_total=len(dataset),
         eval_duration_seconds=eval_duration,
+        eval_mode=eval_mode.value,
         problem_results=problem_results,
     )
 
 
 # ============================================================================
-# CSV Output
+# JSON Output
 # ============================================================================
 
 
-def save_results_to_csv(results: list[EvalResult], output_path: str):
-    """Save evaluation results to CSV file."""
+def save_results_to_json(results: list[EvalResult], output_path: str):
+    """Append evaluation results to JSON Lines file.
+
+    Each result is written as a single JSON object on its own line.
+    This format is easy to append and parse.
+    """
     if not results:
         return
-
-    fieldnames = [
-        "experiment_name",
-        "checkpoint_step",
-        "workflow_type",
-        "model_size",
-        "share_policy",
-        "accuracy",
-        "num_correct",
-        "num_total",
-        "eval_duration_seconds",
-    ]
 
     output_dir = os.path.dirname(output_path)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    with open(output_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
+    with open(output_path, "a") as f:
         for result in results:
-            writer.writerow(result.to_csv_row())
+            f.write(json.dumps(result.to_dict()) + "\n")
 
-    print(f"\nResults saved to: {output_path}")
+    print(f"\nResults appended to: {output_path}")
 
 
 # ============================================================================
@@ -614,14 +831,46 @@ def main(args):
     print("Math Checkpoint Evaluation (vLLM Pipeline)")
     print("=" * 60)
 
-    # Discover checkpoints
-    print(f"\nDiscovering checkpoints in: {args.checkpoints_dir}")
-    step_filter = args.step_filter if args.step_filter else None
-    checkpoints = discover_checkpoints(
-        args.checkpoints_dir,
-        experiment_filter=args.experiment_filter,
-        step_filter=step_filter,
-    )
+    # Parse evaluation mode
+    eval_mode = EvalMode(args.eval_mode)
+    print(f"\nEvaluation mode: {eval_mode.value}")
+
+    # Validate arguments based on mode
+    if eval_mode == EvalMode.TRAINED_CHECKPOINT:
+        if not args.checkpoints_dir:
+            raise ValueError("--checkpoints-dir is required for trained_checkpoint mode")
+    elif eval_mode in (EvalMode.BASE_MODEL, EvalMode.SINGLE_AGENT_TRANSFER):
+        if not args.base_model:
+            raise ValueError(f"--base-model is required for {eval_mode.value} mode")
+        if not args.workflow_types:
+            raise ValueError(f"--workflow-types is required for {eval_mode.value} mode")
+        if eval_mode == EvalMode.SINGLE_AGENT_TRANSFER and not args.single_agent_lora_path:
+            raise ValueError("--single-agent-lora-path is required for single_agent_transfer mode")
+
+    # Create or discover checkpoints based on mode
+    if eval_mode == EvalMode.TRAINED_CHECKPOINT:
+        # Discover checkpoints from directory
+        print(f"\nDiscovering checkpoints in: {args.checkpoints_dir}")
+        step_filter = args.step_filter if args.step_filter else None
+        checkpoints = discover_checkpoints(
+            args.checkpoints_dir,
+            experiment_filter=args.experiment_filter,
+            step_filter=step_filter,
+        )
+
+        # Apply last-checkpoint-only filter if requested
+        if args.last_checkpoint_only and checkpoints:
+            print(f"Filtering to keep only last checkpoint per experiment...")
+            checkpoints = filter_last_checkpoints(checkpoints)
+    else:
+        # Create synthetic checkpoints for base_model or single_agent_transfer modes
+        eval_config = EvalConfig(
+            mode=eval_mode,
+            base_model=args.base_model,
+            workflow_types=args.workflow_types,
+            single_agent_lora_path=args.single_agent_lora_path,
+        )
+        checkpoints = create_synthetic_checkpoints(eval_config)
 
     if not checkpoints:
         print("No checkpoints found!")
@@ -675,6 +924,8 @@ def main(args):
 
         try:
             # Start vLLM server for this model
+            # Only enable LoRA if we're not in base_model mode
+            enable_lora = eval_mode != EvalMode.BASE_MODEL
             server = VLLMServerManager(
                 model=base_model,
                 tensor_parallel_size=args.tensor_parallel,
@@ -684,6 +935,7 @@ def main(args):
                 max_loras=args.max_loras,
                 max_lora_rank=args.max_lora_rank,
                 max_model_len=args.max_prompt_length + args.max_tokens,
+                enable_lora=enable_lora,
             )
             server.start()
 
@@ -698,6 +950,7 @@ def main(args):
                 sampling_params={
                     "temperature": args.temperature,
                 },
+                disable_thinking=True,
             )
 
             # Evaluate all checkpoints for this model
@@ -710,12 +963,14 @@ def main(args):
                             engine=engine,
                             dataset=dataset_list,
                             n_parallel=args.n_parallel,
+                            eval_mode=eval_mode,
+                            single_agent_lora_path=args.single_agent_lora_path,
                         )
                     )
                     all_results.append(result)
 
                     # Save intermediate results
-                    save_results_to_csv(all_results, args.output_csv)
+                    save_results_to_json(all_results, args.output_json)
 
                 except Exception as e:
                     print(f"Error evaluating {checkpoint.experiment_name}: {e}")
@@ -735,20 +990,22 @@ def main(args):
     print("\n" + "=" * 60)
     print("EVALUATION COMPLETE")
     print("=" * 60)
+    print(f"Evaluation mode: {eval_mode.value}")
     print(f"Total checkpoints evaluated: {len(all_results)}")
-    print(f"Results saved to: {args.output_csv}")
+    print(f"Results appended to: {args.output_json}")
 
     if all_results:
         print("\nSummary:")
-        print(f"{'Experiment':<50} {'Step':>6} {'Accuracy':>10}")
-        print("-" * 70)
+        print(f"{'Experiment':<50} {'Step':>6} {'Accuracy':>10} {'Mode':<25}")
+        print("-" * 95)
         for result in sorted(
             all_results, key=lambda x: (x.experiment_name, x.checkpoint_step)
         ):
             print(
                 f"{result.experiment_name:<50} "
                 f"{result.checkpoint_step:>6} "
-                f"{result.accuracy:>10.2%}"
+                f"{result.accuracy:>10.2%} "
+                f"{result.eval_mode:<25}"
             )
 
 
@@ -763,22 +1020,55 @@ def parse_args():
         description="Evaluate math reasoning checkpoints using vLLM pipeline"
     )
 
+    # Evaluation mode arguments
+    parser.add_argument(
+        "--eval-mode",
+        type=str,
+        choices=["trained_checkpoint", "base_model", "single_agent_transfer"],
+        default="trained_checkpoint",
+        help="Evaluation mode: trained_checkpoint (default), base_model, or single_agent_transfer",
+    )
     parser.add_argument(
         "--checkpoints-dir",
         type=str,
-        required=True,
-        help="Path to checkpoints directory",
+        required=False,
+        default=None,
+        help="Path to checkpoints directory (required for trained_checkpoint mode)",
     )
     parser.add_argument(
-        "--output-csv",
+        "--base-model",
         type=str,
-        default="eval_results.csv",
-        help="Output CSV file path",
+        default=None,
+        help="Base model path (required for base_model and single_agent_transfer modes)",
+    )
+    parser.add_argument(
+        "--workflow-types",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Workflow types to evaluate (required for base_model and single_agent_transfer modes)",
+    )
+    parser.add_argument(
+        "--single-agent-lora-path",
+        type=str,
+        default=None,
+        help="Path to single-agent LoRA adapter (required for single_agent_transfer mode)",
+    )
+    parser.add_argument(
+        "--last-checkpoint-only",
+        action="store_true",
+        help="Only evaluate the last (highest step) checkpoint per experiment",
+    )
+    parser.add_argument(
+        "--output-json",
+        type=str,
+        default="eval_results.jsonl",
+        help="Output JSON Lines file path (results are appended)",
     )
     parser.add_argument(
         "--dataset",
         type=str,
-        default="aime2025",
+        default="dapo_math",
         help="Dataset name to evaluate on",
     )
     parser.add_argument(
@@ -821,7 +1111,7 @@ def parse_args():
     parser.add_argument(
         "--n-parallel",
         type=int,
-        default=32,
+        default=128,
         help="Number of parallel workflow instances",
     )
     parser.add_argument(
