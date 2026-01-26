@@ -176,17 +176,37 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
         """
         from rllm.utils.tracking import Tracking
 
+        self.global_steps = 0
+
+        # Load checkpoint first to restore global_steps
+        self._load_checkpoint()
+
+        # Determine resume parameters for wandb logging
+        resume_run_id = None
+        resume_mode = None
+
+        if self.global_steps > 0:
+            # We're resuming from a checkpoint, try to resume wandb logging
+            metadata = self._load_training_metadata()
+            resume_run_id = metadata.get("wandb_run_id")
+            resume_mode = "allow"  # Use "allow" to handle deleted runs gracefully
+
+            if resume_run_id:
+                print(f"Resuming wandb run: {resume_run_id}")
+            else:
+                print("No wandb run_id in metadata, will attempt to find by experiment_name")
+
         logger = Tracking(
             project_name=self.config.trainer.project_name,
             experiment_name=self.config.trainer.experiment_name,
             default_backend=self.config.trainer.logger,
             config=OmegaConf.to_container(self.config, resolve=True),
+            resume_run_id=resume_run_id,
+            resume_mode=resume_mode,
         )
 
-        self.global_steps = 0
-
-        # load checkpoint before doing anything
-        self._load_checkpoint()
+        # Store logger reference for metadata saving
+        self._tracking_logger = logger
 
         # perform validation before training
         import time
@@ -1014,6 +1034,9 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
         # Call parent to save the full model checkpoint (including all adapters in model_*.pt)
         super()._save_checkpoint()
 
+        # Save training metadata (including wandb run ID for resume) - always save regardless of mode
+        self._save_training_metadata()
+
         # If not multi-agent mode, the parent's save is sufficient
         if self.config.trainer.share_policy:
             return
@@ -1044,6 +1067,45 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
                 global_step=self.global_steps,
             )
             print(f"Saved LoRA adapter for agent '{agent_name}' to: {agent_lora_path}")
+
+    def _save_training_metadata(self):
+        """Save training metadata to enable resuming wandb logging from checkpoint."""
+        import json
+
+        metadata_path = os.path.join(
+            self.config.trainer.default_local_dir, "training_metadata.json"
+        )
+        metadata = {
+            "global_steps": self.global_steps,
+            "experiment_name": self.config.trainer.experiment_name,
+            "project_name": self.config.trainer.project_name,
+        }
+
+        # Save wandb run ID if available
+        if hasattr(self, "_tracking_logger") and self._tracking_logger is not None:
+            wandb_run_id = getattr(self._tracking_logger, "wandb_run_id", None)
+            if wandb_run_id:
+                metadata["wandb_run_id"] = wandb_run_id
+
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        print(f"Saved training metadata to: {metadata_path}")
+
+    def _load_training_metadata(self) -> dict:
+        """Load training metadata from checkpoint directory.
+
+        Returns:
+            Dictionary containing saved metadata, or empty dict if not found.
+        """
+        import json
+
+        metadata_path = os.path.join(
+            self.config.trainer.default_local_dir, "training_metadata.json"
+        )
+        if os.path.exists(metadata_path):
+            with open(metadata_path, "r") as f:
+                return json.load(f)
+        return {}
 
     def shutdown(self):
         """A cleanup method to gracefully stop the background event loop."""
