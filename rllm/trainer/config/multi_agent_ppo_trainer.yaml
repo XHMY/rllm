@@ -83,6 +83,7 @@ rllm:
   workflow:
     use_workflow: True # Enabled (From Source A)
     name: single_turn_workflow
+    use_final_outcome_reward: True
 
     # Merged workflow arguments
     workflow_args:

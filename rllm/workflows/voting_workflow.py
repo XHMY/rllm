@@ -54,6 +54,7 @@ class VotingWorkflow(Workflow):
         self,
         rollout_engine: RolloutEngine,
         n_votes: int = 3,
+        use_final_outcome_reward: bool = False,
         **kwargs,
     ):
         """Initialize the VotingWorkflow.
@@ -61,10 +62,13 @@ class VotingWorkflow(Workflow):
         Args:
             rollout_engine: Engine for LLM inference
             n_votes: Number of parallel generation attempts
+            use_final_outcome_reward: If True, assign the final outcome reward to
+                ALL trajectories in the episode.
             **kwargs: Additional arguments passed to parent Workflow
         """
         super().__init__(rollout_engine, **kwargs)
         self.n_votes = n_votes
+        self.use_final_outcome_reward = use_final_outcome_reward
 
     # ===== Abstract methods that subclasses MUST implement =====
 
@@ -202,7 +206,7 @@ class VotingWorkflow(Workflow):
         response = self.extract_response(output)
 
         trajectory = Trajectory(
-            name=self.GENERATOR_NAME,
+            name=f"{self.GENERATOR_NAME}{vote_index}",  # Unique name per vote for separate GRPO groups
             steps=[
                 Step(
                     chat_completions=messages + [{
@@ -304,6 +308,15 @@ class VotingWorkflow(Workflow):
             "success": int(final_is_correct),
             f"{self.GENERATOR_NAME}_attempts": self.n_votes,
         }
+
+        # If use_final_outcome_reward is enabled, propagate the final reward
+        # to all trajectories (all generators + aggregator)
+        if self.use_final_outcome_reward:
+            final_reward_value = agg_reward.reward
+            for trajectory in all_trajectories:
+                trajectory.reward = final_reward_value
+                for step in trajectory.steps:
+                    step.reward = final_reward_value
 
         return Episode(
             id=uid,
