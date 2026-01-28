@@ -1,6 +1,7 @@
 import asyncio
 import math
 import os
+import re
 import shutil
 import threading
 import uuid
@@ -146,7 +147,11 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
             contains the non-padded sample indices for scatter-back operations.
         """
         trajectory_ids = batch.non_tensor_batch["trajectory_ids"]
-        agent_names = [traj_id.rsplit("_", 1)[1] for traj_id in trajectory_ids]
+        # Extract agent name from trajectory_id (format: {uid}_{agent_name})
+        # Strip numeric suffix to get base agent name for LoRA routing
+        # (e.g., "generator0" → "generator" for VotingWorkflow)
+        raw_names = [traj_id.rsplit("_", 1)[1] for traj_id in trajectory_ids]
+        agent_names = [re.sub(r'\d+$', '', name) for name in raw_names]
 
         # Group indices by agent name
         agent_to_indices = defaultdict(list)

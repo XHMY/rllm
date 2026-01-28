@@ -20,12 +20,13 @@ export VERL_LOGGING_LEVEL=INFO
 
 
 python3 -m examples.math_reasoning.train_voting_math \
-    data.max_prompt_length=15360 \
+    data.max_prompt_length=16384 \
     data.max_response_length=5120 \
     actor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
-    trainer.project_name='rllm-workflow-MARL' \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=51200 \
+    trainer.project_name='rllm-workflow-MARL-v2' \
     trainer.experiment_name='voting-qwen3_0.6b-math' \
-    trainer.n_gpus_per_node=2 \
+    trainer.n_gpus_per_node=4 \
     trainer.agent_names=['generator','aggregator'] \
     +rllm.workflow.n_votes=3
 

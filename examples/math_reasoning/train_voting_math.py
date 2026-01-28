@@ -40,11 +40,19 @@ def main(config):
     if hasattr(config, "rllm") and hasattr(config.rllm, "workflow"):
         n_votes = getattr(config.rllm.workflow, "n_votes", 3)
 
+    # Get use_final_outcome_reward from config if specified, default to False
+    use_final_outcome_reward = False
+    if hasattr(config, "rllm") and hasattr(config.rllm, "workflow"):
+        use_final_outcome_reward = getattr(
+            config.rllm.workflow, "use_final_outcome_reward", False
+        )
+
     trainer = AgentTrainer(
         workflow_class=VotingMathWorkflow,
         workflow_args={
             "n_votes": n_votes,
             "reward_function": math_reward_fn,
+            "use_final_outcome_reward": use_final_outcome_reward,
         },
         config=config,
         train_dataset=train_dataset,
