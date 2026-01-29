@@ -683,6 +683,7 @@ async def evaluate_checkpoint(
     n_parallel: int = 32,
     eval_mode: EvalMode = EvalMode.TRAINED_CHECKPOINT,
     single_agent_lora_path: str = None,
+    trajectory_output_dir: str = None,
 ) -> EvalResult:
     """Evaluate a single checkpoint on the dataset.
 
@@ -774,6 +775,13 @@ async def evaluate_checkpoint(
         if is_correct:
             num_correct += 1
 
+    # Save detailed trajectories if output directory specified
+    if trajectory_output_dir:
+        checkpoint_name = f"{checkpoint.experiment_name}_step{checkpoint.checkpoint_step}"
+        for episode in episodes:
+            if isinstance(episode, Episode):
+                save_trajectory_to_json(episode, trajectory_output_dir, checkpoint_name)
+
     eval_duration = time.time() - start_time
     accuracy = num_correct / len(dataset) if dataset else 0.0
 
@@ -798,6 +806,29 @@ async def evaluate_checkpoint(
 # ============================================================================
 # JSON Output
 # ============================================================================
+
+
+def save_trajectory_to_json(episode: Episode, output_dir: str, checkpoint_name: str) -> None:
+    """Save a single episode's full trajectory to a JSON file.
+
+    Args:
+        episode: The Episode containing all prompts and responses.
+        output_dir: Base directory for saving trajectories.
+        checkpoint_name: Name of the checkpoint being evaluated.
+    """
+    # Create subdirectory for this checkpoint
+    checkpoint_dir = os.path.join(output_dir, checkpoint_name)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    # Use episode.id as filename (e.g., "eval_0.json")
+    filename = f"{episode.id}.json"
+    filepath = os.path.join(checkpoint_dir, filename)
+
+    # Serialize the full episode
+    episode_dict = episode.to_dict()
+
+    with open(filepath, "w") as f:
+        json.dump(episode_dict, f, indent=2)
 
 
 def save_results_to_json(results: list[EvalResult], output_path: str):
@@ -965,6 +996,7 @@ def main(args):
                             n_parallel=args.n_parallel,
                             eval_mode=eval_mode,
                             single_agent_lora_path=args.single_agent_lora_path,
+                            trajectory_output_dir=args.trajectory_output_dir,
                         )
                     )
                     all_results.append(result)
@@ -1068,7 +1100,7 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="dapo_math",
+        default="aime2025",
         help="Dataset name to evaluate on",
     )
     parser.add_argument(
@@ -1093,7 +1125,7 @@ def parse_args():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=4096,
+        default=5120,
         help="Max tokens for generation",
     )
     parser.add_argument(
@@ -1143,6 +1175,12 @@ def parse_args():
         type=int,
         default=64,
         help="Maximum LoRA rank",
+    )
+    parser.add_argument(
+        "--trajectory-output-dir",
+        type=str,
+        default=None,
+        help="Directory to save detailed trajectory JSON files (one per problem)",
     )
 
     return parser.parse_args()
