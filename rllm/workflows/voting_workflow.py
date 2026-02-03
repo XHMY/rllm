@@ -257,6 +257,9 @@ class VotingWorkflow(Workflow):
             if reward_result.is_correct:
                 generator_correct_count += 1
 
+            # Commit trajectory immediately to preserve it if later steps fail
+            self.commit(trajectory=traj)
+
         # Hook for custom processing after generation
         self.on_generation_complete(list(generator_trajectories))
 
@@ -294,6 +297,9 @@ class VotingWorkflow(Workflow):
             ],
         )
         aggregator_trajectory.reward = agg_reward.reward
+
+        # Commit aggregator trajectory immediately
+        self.commit(trajectory=aggregator_trajectory)
 
         # Compute metrics
         all_trajectories = list(generator_trajectories) + [aggregator_trajectory]

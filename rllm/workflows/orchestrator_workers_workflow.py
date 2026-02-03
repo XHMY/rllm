@@ -469,6 +469,9 @@ class OrchestratorWorkersWorkflow(Workflow):
 
         all_trajectories.append(decomp_trajectory)
 
+        # Commit decomposition trajectory immediately to preserve it if later steps fail
+        self.commit(trajectory=decomp_trajectory)
+
         # Hook for decomposition complete
         self.on_decomposition_complete(decomposition, decomp_trajectory)
 
@@ -487,6 +490,8 @@ class OrchestratorWorkersWorkflow(Workflow):
             for i, (result, trajectory) in enumerate(results_and_trajectories):
                 worker_results.append(result)
                 worker_trajectories.append(trajectory)
+                # Commit worker trajectory immediately
+                self.commit(trajectory=trajectory)
                 self.on_worker_complete(i, result, trajectory)
         else:
             # Sequential execution, passing previous results
@@ -496,6 +501,8 @@ class OrchestratorWorkersWorkflow(Workflow):
                 )
                 worker_results.append(result)
                 worker_trajectories.append(trajectory)
+                # Commit worker trajectory immediately
+                self.commit(trajectory=trajectory)
                 self.on_worker_complete(i, result, trajectory)
 
         all_trajectories.extend(worker_trajectories)
@@ -530,6 +537,9 @@ class OrchestratorWorkersWorkflow(Workflow):
         )
         synth_trajectory.reward = final_reward.reward
         all_trajectories.append(synth_trajectory)
+
+        # Commit synthesis trajectory immediately
+        self.commit(trajectory=synth_trajectory)
 
         # Hook for synthesis complete
         self.on_synthesis_complete(final_response, synth_trajectory)

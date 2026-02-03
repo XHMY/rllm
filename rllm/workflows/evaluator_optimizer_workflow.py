@@ -310,6 +310,9 @@ class EvaluatorOptimizerWorkflow(Workflow):
         if gen_reward.is_correct:
             generator_correct_count += 1
 
+        # Commit trajectory immediately to preserve it if later steps fail
+        self.commit(trajectory=gen_trajectory)
+
         # Build conversation history
         conversation_history.extend(gen_messages)
         conversation_history.append({
@@ -363,6 +366,9 @@ class EvaluatorOptimizerWorkflow(Workflow):
             if eval_reward.is_correct:
                 evaluator_correct_count += 1
 
+            # Commit evaluator trajectory immediately
+            self.commit(trajectory=eval_trajectory)
+
             # Update conversation history with evaluation
             conversation_history.append({
                 "role": "assistant",
@@ -409,6 +415,9 @@ class EvaluatorOptimizerWorkflow(Workflow):
             generator_attempts += 1
             if refine_reward.is_correct:
                 generator_correct_count += 1
+
+            # Commit refinement trajectory immediately
+            self.commit(trajectory=refine_trajectory)
 
             # Update conversation history with refinement
             conversation_history.append({
