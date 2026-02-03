@@ -23,7 +23,7 @@ actor_rollout_ref:
     ppo_mini_batch_size: 64
     loss_agg_mode: seq-mean-token-mean
     use_dynamic_bsz: True
-    ppo_max_token_len_per_gpu: 30720
+    ppo_max_token_len_per_gpu: 51200
     ppo_micro_batch_size_per_gpu: 4
     clip_ratio_high: 0.28
     fsdp_config:
