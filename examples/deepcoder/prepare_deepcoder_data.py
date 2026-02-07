@@ -46,8 +46,8 @@ def prepare_deepcoder_data(train_size: int = None, test_size: int = None):
     if test_size:
         test_dataset = test_dataset.select(range(min(test_size, len(test_dataset))))
 
-    train_dataset = train_dataset.map(preprocess_fn, with_indices=True, writer_batch_size=10, num_proc=16)
-    test_dataset = test_dataset.map(preprocess_fn, with_indices=True, writer_batch_size=10, num_proc=16)
+    train_dataset = train_dataset.map(preprocess_fn, with_indices=True, writer_batch_size=10, num_proc=16, remove_columns=train_dataset.column_names)
+    test_dataset = test_dataset.map(preprocess_fn, with_indices=True, writer_batch_size=10, num_proc=16, remove_columns=test_dataset.column_names)
     train_dataset = DatasetRegistry.register_dataset("deepcoder", train_dataset, "train")
     test_dataset = DatasetRegistry.register_dataset("deepcoder", test_dataset, "test")
 

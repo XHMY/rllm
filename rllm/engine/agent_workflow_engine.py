@@ -159,13 +159,14 @@ class AgentWorkflowEngine:
                 idx_counter += 1
             rollout_idx = state["total_rollouts"]
 
-            # If task['tests'] is not valid json format, skip it
-            if "tests" in task:
+            # Validate ground_truth field (warn but don't skip — reward function handles errors gracefully)
+            if "ground_truth" in task:
                 try:
-                    _ = json.loads(task["tests"])
+                    ground_truth = task["ground_truth"]
+                    if isinstance(ground_truth, str) and ground_truth:
+                        _ = json.loads(ground_truth)
                 except Exception as e:
-                    logger.error(f"Task {task_id} has invalid 'tests' field: {e}. Skipping this task.")
-                    continue
+                    logger.warning(f"Task {task_id} has invalid 'ground_truth' field: {e}. Task will proceed but reward may fail.")
 
             futures.append(self.process_task_with_retry(task, task_id, rollout_idx, **kwargs))
             state["total_rollouts"] += 1
