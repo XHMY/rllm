@@ -13,7 +13,7 @@
 
 set -x
 
-ulimit -n 1048576
+ulimit -n 10240
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
 export VLLM_USE_V1=1
@@ -25,19 +25,16 @@ export VERL_LOGGING_LEVEL=INFO
 
 
 python3 -m examples.deepcoder.train_deepcoder_evaluator_optimizer \
-    data.max_prompt_length=4096 \
-    data.max_response_length=512 \
-    actor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=10240 \
-    trainer.project_name='rllm-workflow-MARL' \
-    trainer.experiment_name='evaluator_optimizer-qwen3_0.6b-deepcoder' \
-    trainer.n_gpus_per_node=2 \
+    data.max_prompt_length=30720 \
+    data.max_response_length=2048 \
+    actor_rollout_ref.model.path=Qwen/Qwen3-1.7B \
+    trainer.project_name='rllm-workflow-MARL-v2' \
+    trainer.experiment_name='evaluator_optimizer-qwen3_1.7b-deepcoder' \
+    trainer.n_gpus_per_node=1 \
     trainer.share_policy=False \
     trainer.agent_names=['generator','evaluator'] \
+    rllm.workflow.n_parallel_tasks=1024 \
     +rllm.workflow.max_iterations=2 \
-    +rllm.workflow.enable_test_loop=False \
-    +rllm.workflow.max_test_rounds=2 \
-    +rllm.workflow.max_tests_to_show=3 \
-    +rllm.workflow.public_test_only=False
+    +rllm.workflow.enable_test_loop=False
 
 pkill -9 -f 'ray::WorkerDict'
