@@ -448,7 +448,7 @@ class RewardCodeFn:
         dataset_name = task_info.get("data_source", "")
         tests = task_info.get("ground_truth", None)
 
-        if tests is None:
+        if tests is None or (isinstance(tests, str) and not tests.strip()):
             print("No tests found in task_info")
             return RewardOutput(reward=self.config.format_error_reward, is_correct=False, metadata={"error": "No tests found in task_info"})
 
