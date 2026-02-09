@@ -7,7 +7,6 @@ import ast
 import json
 import multiprocessing
 import re
-from multiprocessing import Manager
 from typing import Any
 
 from rllm.rewards.code_utils.firejail_exec import code_exec_firejail as lc_code_exec
@@ -85,15 +84,16 @@ def check_correctness(tests: list[dict[str, str]] | dict[str, list[str]], code: 
             - bool: True if all tests pass, False otherwise
             - dict: Detailed test results with test cases and pass/fail status
     """
-    manager = Manager()
-    test_results = manager.list()
 
-    def evaluate_code(tests, generation, debug, test_results, test_fn):
+    def evaluate_code(tests, generation, debug, conn, test_fn):
         """Helper function to run tests in separate process."""
         try:
-            test_results.append(test_fn(tests, test=generation, debug=debug, timeout=timeout_per_test))
+            result = test_fn(tests, test=generation, debug=debug, timeout=timeout_per_test)
+            conn.send(result)
         except Exception as e:
             print(f"Error in evaluate_code: {e}")
+        finally:
+            conn.close()
 
     original_tests = tests
     if isinstance(tests, list):
@@ -115,20 +115,33 @@ def check_correctness(tests: list[dict[str, str]] | dict[str, list[str]], code: 
             tests = selected_tests
         num_tests = len(tests["inputs"])
 
-    process = multiprocessing.Process(target=evaluate_code, args=(tests, code, False, test_results, test_fn))
+    parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
+    process = multiprocessing.Process(target=evaluate_code, args=(tests, code, False, child_conn, test_fn))
     process.start()
-    process.join()
+    child_conn.close()  # Close child end in parent so recv() can detect EOF
+
+    global_timeout = (timeout_per_test + 1) * num_tests + 5
+    process.join(timeout=global_timeout)
 
     if process.is_alive():
         process.kill()
-    test_results_list = list(test_results)
+        process.join(timeout=5)
+
+    # Read result from pipe
+    test_results_data = None
+    try:
+        if parent_conn.poll():
+            test_results_data = parent_conn.recv()
+    except (EOFError, OSError):
+        pass
+    finally:
+        parent_conn.close()
 
     detailed_results: dict[str, Any] = {"all_passed": False, "test_results": [], "total_tests": num_tests, "passed_tests": 0}
 
-    if len(test_results_list) == 0:
+    if test_results_data is None:
         return False, detailed_results
 
-    test_results_data = test_results_list[0]
     passed_results = [r == True for r in test_results_data]
 
     # Create detailed test results
@@ -199,10 +212,14 @@ def primeintellect_check_correctness(tests, code, use_tci=False):
     return check_correctness(tests_formatted, code, taco_run_test)
 
 
-def _temp_run(sample, generation, debug, result, metadata_list, timeout):
-    res, metadata = lcb_run_test(sample, test=generation, debug=debug, timeout=timeout)
-    result.append(res)
-    metadata_list.append(metadata)
+def _temp_run(sample, generation, debug, conn, timeout):
+    try:
+        res, metadata = lcb_run_test(sample, test=generation, debug=debug, timeout=timeout)
+        conn.send((res, metadata))
+    except Exception as e:
+        print(f"Error in _temp_run: {e}")
+    finally:
+        conn.close()
 
 
 def lcb_check_correctness_v2(sample, generation, timeout=6, debug=False):
@@ -212,42 +229,51 @@ def lcb_check_correctness_v2(sample, generation, timeout=6, debug=False):
     assert len(sample) >= 1, "Sample must contain at least one test case"
     sample = postprocess_lcb_sample(sample)
 
-    manager = multiprocessing.Manager()
-    result = manager.list()
-    metadata_list = manager.list()
+    parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
 
     p = multiprocessing.Process(
         target=_temp_run,
-        args=(sample, generation, debug, result, metadata_list, timeout),
+        args=(sample, generation, debug, child_conn, timeout),
     )
     p.start()
-    p.join(timeout=(timeout + 1) * len(json.loads(sample["input_output"])["inputs"]) + 5)
+    child_conn.close()  # Close child end in parent so recv() can detect EOF
+
+    global_timeout = (timeout + 1) * len(json.loads(sample["input_output"])["inputs"]) + 5
+    p.join(timeout=global_timeout)
 
     detailed_results = {"all_passed": False, "test_results": [], "total_tests": 0, "passed_tests": 0}
 
     if p.is_alive():
         p.kill()
-    if not result:
+        p.join(timeout=5)
+
+    # Read result from pipe
+    result = None
+    metadata = None
+    try:
+        if parent_conn.poll():
+            result, metadata = parent_conn.recv()
+    except (EOFError, OSError):
+        pass
+    finally:
+        parent_conn.close()
+
+    if result is None:
         in_outs = json.loads(sample["input_output"])
-        # consider that all tests failed
-        result.extend([[-1 for i in range(len(in_outs["inputs"]))]])
         detailed_results["total_tests"] = len(in_outs["inputs"])
         detailed_results["test_results"] = [{"input": inp, "expected": out, "passed": False, "error": "global timeout"} for inp, out in zip(in_outs["inputs"], in_outs["outputs"], strict=False)]
         if debug:
             print("global timeout")
         return False, detailed_results
 
-    if not result:
-        return False, detailed_results
-
     # Create detailed test results
     in_outs = json.loads(sample["input_output"])
-    detailed_results["total_tests"] = len(result[0])
-    detailed_results["test_results"] = [{"input": inp, "expected": out, "passed": res == True, "error": metadata_list[0].get("error", None), "error_message": metadata_list[0].get("error_message", None), "output": metadata_list[0].get("output", None)} for inp, out, res in zip(in_outs["inputs"], in_outs["outputs"], result[0], strict=False)]
-    detailed_results["passed_tests"] = sum(1 for r in result[0] if r == True)
-    detailed_results["all_passed"] = all(r == True for r in result[0])
+    detailed_results["total_tests"] = len(result)
+    detailed_results["test_results"] = [{"input": inp, "expected": out, "passed": res == True, "error": metadata.get("error", None), "error_message": metadata.get("error_message", None), "output": metadata.get("output", None)} for inp, out, res in zip(in_outs["inputs"], in_outs["outputs"], result, strict=False)]
+    detailed_results["passed_tests"] = sum(1 for r in result if r == True)
+    detailed_results["all_passed"] = all(r == True for r in result)
 
-    return all(x == True for x in result[0]), detailed_results
+    return all(x == True for x in result), detailed_results
 
 
 def leetcode_check_correctness(tests: dict[str, str], code: str) -> tuple[bool, dict[str, Any]]:

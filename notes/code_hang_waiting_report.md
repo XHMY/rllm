@@ -71,10 +71,37 @@ After vLLM completes all generation, the remaining trajectories are waiting on s
 - **vLLM engine**: `worker-b4dba5dc...-2204670.out` (engine throughput, request counts, KV cache)
 - **Events**: `events/event_RAYLET.log` (driver death at 18:20)
 
-## Suggested Next Steps
+## Root Cause (Confirmed)
 
-1. Add logging/timing inside the agent loop to pinpoint where time is spent after vLLM generation completes (code execution? callback? orchestration?)
-2. Set `trajectory_timeout` to a reasonable value (e.g., 300-600s) to prevent infinite waits
-3. Investigate the sandbox setup (`sandbox_fusion.url: None`) -- is a local sandbox hanging?
-4. Check if the `AgentLoopManager` has a bug where it fails to resolve the last few trajectories
-5. Add per-trajectory timing breakdowns (vLLM time vs. code execution time vs. wait time) to wandb logging
+**`multiprocessing.Manager()` deadlock inside `ThreadPoolExecutor` threads.**
+
+The reward code in `rllm/rewards/code_reward.py` uses a `ThreadPoolExecutor` with 128 worker threads to evaluate code solutions in parallel. Two functions — `check_correctness()` and `lcb_check_correctness_v2()` — called `multiprocessing.Manager()` inside these threads. `Manager()` forks a background server process. On Linux, `fork()` from a multithreaded process copies all held locks into the child. If any thread in the parent holds a lock at the moment of fork, the child inherits a locked mutex with no thread to release it, causing the Manager server to deadlock.
+
+When the Manager server is deadlocked, any access to its proxy objects (e.g., `if not result:`, `list(test_results)`) blocks indefinitely. No timeout protected these accesses. Additionally, `process.join()` in `check_correctness()` was called without a timeout, so a hung child process would block the parent thread forever.
+
+This explains the observed behavior:
+- The hang occurs **after vLLM finishes** — during the code execution/reward phase
+- It **worsens over time** — each step creates hundreds of Manager processes; the probability of hitting the fork-lock race increases with accumulated thread/process state
+- The progress bar gets stuck at **511/512** — a single deadlocked Manager blocks its thread indefinitely, preventing the last trajectory from completing
+
+## Fix Applied (2026-02-08)
+
+**File**: `rllm/rewards/code_reward.py`
+
+Replaced `multiprocessing.Manager()` with `multiprocessing.Pipe()` in both functions. `Pipe()` creates a pair of connected file descriptors without forking any server process, making it safe to use from any thread.
+
+### Changes:
+
+1. **`check_correctness()`**: Removed `Manager()` and `manager.list()`. Child process now sends results via `conn.send(result)` over a `Pipe(duplex=False)`. Parent reads with `poll()`/`recv()`. Added `process.join(timeout=...)` with a calculated global timeout. Added `process.join(timeout=5)` after `kill()` to reap zombies.
+
+2. **`lcb_check_correctness_v2()` / `_temp_run()`**: Same pattern. `_temp_run()` now accepts a `conn` argument and sends `(res, metadata)` as a tuple. Parent unpacks after `poll()`/`recv()`. Added `p.join(timeout=5)` after `kill()` to reap zombies.
+
+3. **Removed `from multiprocessing import Manager`** import (no longer used).
+
+### What stayed the same:
+- All code execution still runs in separate `multiprocessing.Process` subprocesses
+- `ThreadPoolExecutor` with 128 workers is unchanged
+- `signal.alarm()` timeout inside child processes is unchanged
+- `reliability_guard()` sandbox is unchanged
+- All return types and interfaces remain identical
+
