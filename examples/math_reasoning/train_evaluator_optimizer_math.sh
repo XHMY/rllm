@@ -22,15 +22,14 @@ export VERL_LOGGING_LEVEL=INFO
 python3 -m examples.math_reasoning.train_evaluator_optimizer_math \
     data.max_prompt_length=30720 \
     data.max_response_length=5120 \
-    actor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
+    actor_rollout_ref.model.path=Qwen/Qwen3-1.7B \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.85 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=51200 \
-    trainer.experiment_name='evaluator_optimizer-qwen3_0.6b-math-stage2' \
-    trainer.n_gpus_per_node=2 \
-    trainer.val_before_train=true \
+    trainer.experiment_name='evaluator_optimizer-qwen3_1.7b-math' \
+    trainer.n_gpus_per_node=4 \
+    trainer.val_before_train=false \
     trainer.agent_names=['generator','evaluator'] \
     rllm.workflow.use_final_outcome_reward=true \
-    rllm.workflow.n_parallel_tasks=512 \
     +rllm.workflow.max_iterations=3
     
 

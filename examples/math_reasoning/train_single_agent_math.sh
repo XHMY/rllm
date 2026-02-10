@@ -12,14 +12,15 @@ export VERL_LOGGING_LEVEL=INFO
 python3 -m examples.math_reasoning.train_single_agent_math \
     data.max_prompt_length=15360 \
     data.max_response_length=5120 \
-    actor_rollout_ref.model.path=Qwen/Qwen3-0.6B \
+    actor_rollout_ref.model.path=Qwen/Qwen3-1.7B \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=20480 \
-    actor_rollout_ref.rollout.n=32 \
-    actor_rollout_ref.actor.ppo_epochs=4 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    trainer.experiment_name='qwen3_0.6b-math_single_agent-n32pe4' \
-    trainer.n_gpus_per_node=4 \
-    trainer.share_policy=True
+    trainer.experiment_name='qwen3_1.7b-math_single_agent-length5120' \
+    trainer.n_gpus_per_node=2 \
+    trainer.val_before_train=false \
+    trainer.agent_names=['generator'] \
+    trainer.share_policy=False \
+    trainer.total_training_steps=501
 
 pkill -9 -f 'ray::WorkerDict'
 
