@@ -222,58 +222,114 @@ def _temp_run(sample, generation, debug, conn, timeout):
         conn.close()
 
 
-def lcb_check_correctness_v2(sample, generation, timeout=6, debug=False):
+def lcb_check_correctness_v2(sample, generation, timeout=3, debug=False, batch_size=5):
     """Check correctness of code generation with a global timeout.
+    Tests are split into batches and run in parallel using multiprocessing.Process
+    to speed up evaluation of correct solutions that must pass all tests.
     The global timeout is to catch some extreme/rare cases not handled by the timeouts
     inside `run_test`"""
     assert len(sample) >= 1, "Sample must contain at least one test case"
-    sample = postprocess_lcb_sample(sample)
+    processed_sample = postprocess_lcb_sample(sample)
 
-    parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
+    in_outs = json.loads(processed_sample["input_output"])
+    all_inputs = in_outs["inputs"]
+    all_outputs = in_outs["outputs"]
+    fn_name = in_outs.get("fn_name", None)
+    num_tests = len(all_inputs)
 
-    p = multiprocessing.Process(
-        target=_temp_run,
-        args=(sample, generation, debug, child_conn, timeout),
-    )
-    p.start()
-    child_conn.close()  # Close child end in parent so recv() can detect EOF
+    # Split tests into batches
+    batch_samples = []
+    batch_ranges = []
+    for start in range(0, num_tests, batch_size):
+        end = min(start + batch_size, num_tests)
+        batch_dict = {"inputs": all_inputs[start:end], "outputs": all_outputs[start:end]}
+        if fn_name is not None:
+            batch_dict["fn_name"] = fn_name
+        batch_samples.append({"input_output": json.dumps(batch_dict)})
+        batch_ranges.append((start, end))
 
-    global_timeout = (timeout + 1) * len(json.loads(sample["input_output"])["inputs"]) + 5
-    p.join(timeout=global_timeout)
+    # Run batches in parallel using multiprocessing.Process + Pipe.
+    # We use Pipe (not joblib) because reliability_guard() inside run_test
+    # disables os.fork/os.getcwd/etc., which breaks joblib/loky's pickling.
+    # Pipe.send() uses low-level file descriptors unaffected by reliability_guard().
+    batch_timeout = (timeout + 1) * batch_size + 5
+    pipes = []
+    processes = []
+    for bs in batch_samples:
+        parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
+        p = multiprocessing.Process(
+            target=_temp_run,
+            args=(bs, generation, debug, child_conn, timeout),
+        )
+        p.start()
+        child_conn.close()
+        pipes.append(parent_conn)
+        processes.append(p)
 
-    detailed_results = {"all_passed": False, "test_results": [], "total_tests": 0, "passed_tests": 0}
+    # Wait for all processes to complete
+    for p in processes:
+        p.join(timeout=batch_timeout)
 
-    if p.is_alive():
-        p.kill()
-        p.join(timeout=5)
+    # Kill any still-alive processes
+    for p in processes:
+        if p.is_alive():
+            p.kill()
+            p.join(timeout=5)
 
-    # Read result from pipe
-    result = None
-    metadata = None
-    try:
-        if parent_conn.poll():
-            result, metadata = parent_conn.recv()
-    except (EOFError, OSError):
-        pass
-    finally:
-        parent_conn.close()
+    # Collect results from pipes
+    batch_results = []
+    for parent_conn in pipes:
+        try:
+            if parent_conn.poll():
+                batch_results.append(parent_conn.recv())
+            else:
+                batch_results.append((None, None))
+        except (EOFError, OSError):
+            batch_results.append((None, None))
+        finally:
+            parent_conn.close()
 
-    if result is None:
-        in_outs = json.loads(sample["input_output"])
-        detailed_results["total_tests"] = len(in_outs["inputs"])
-        detailed_results["test_results"] = [{"input": inp, "expected": out, "passed": False, "error": "global timeout"} for inp, out in zip(in_outs["inputs"], in_outs["outputs"], strict=False)]
-        if debug:
-            print("global timeout")
-        return False, detailed_results
+    # Merge results from all batches
+    detailed_results = {"all_passed": False, "test_results": [], "total_tests": num_tests, "passed_tests": 0}
 
-    # Create detailed test results
-    in_outs = json.loads(sample["input_output"])
-    detailed_results["total_tests"] = len(result)
-    detailed_results["test_results"] = [{"input": inp, "expected": out, "passed": res == True, "error": metadata.get("error", None), "error_message": metadata.get("error_message", None), "output": metadata.get("output", None)} for inp, out, res in zip(in_outs["inputs"], in_outs["outputs"], result, strict=False)]
-    detailed_results["passed_tests"] = sum(1 for r in result if r == True)
-    detailed_results["all_passed"] = all(r == True for r in result)
+    for i, (start, end) in enumerate(batch_ranges):
+        batch_len = end - start
+        result, metadata = batch_results[i]
 
-    return all(x == True for x in result), detailed_results
+        if result is None:
+            for j in range(batch_len):
+                detailed_results["test_results"].append({
+                    "input": all_inputs[start + j],
+                    "expected": all_outputs[start + j],
+                    "passed": False,
+                    "error": "global timeout",
+                })
+        else:
+            for j in range(batch_len):
+                if j < len(result):
+                    passed = result[j] == True
+                    detail = {
+                        "input": all_inputs[start + j],
+                        "expected": all_outputs[start + j],
+                        "passed": passed,
+                        "error": metadata.get("error", None) if metadata else None,
+                        "error_message": metadata.get("error_message", None) if metadata else None,
+                        "output": metadata.get("output", None) if metadata else None,
+                    }
+                    detailed_results["test_results"].append(detail)
+                else:
+                    # Early-stopped — tests after the failure were not run
+                    detailed_results["test_results"].append({
+                        "input": all_inputs[start + j],
+                        "expected": all_outputs[start + j],
+                        "passed": False,
+                        "error": "skipped (prior test in batch failed)",
+                    })
+
+    detailed_results["passed_tests"] = sum(1 for t in detailed_results["test_results"] if t["passed"])
+    detailed_results["all_passed"] = all(t["passed"] for t in detailed_results["test_results"])
+
+    return detailed_results["all_passed"], detailed_results
 
 
 def leetcode_check_correctness(tests: dict[str, str], code: str) -> tuple[bool, dict[str, Any]]:
@@ -478,7 +534,12 @@ class RewardCodeFn:
         elif dataset_name in ["livecodebench", "codeforces", "primeintellect"]:
             # Handle case where tests is a JSON string
             if isinstance(tests, str):
-                tests = json.loads(tests)
+                try:
+                    tests = json.loads(tests)
+                except json.decoder.JSONDecodeError:
+                    print("test json invalid: ", tests)
+                    return RewardOutput(reward=self.config.format_error_reward, is_correct=False,
+                                        metadata={"error": "Tests in task_info is invalid json"})
             is_correct, test_details = lcb_check_correctness_v2(tests, model_code, debug=False)
         elif dataset_name == "kodcode":
             is_correct, test_details = kodcode_check_correctness(tests, model_code)
