@@ -81,7 +81,7 @@ class PipelineTaskRunner:
         with open_dict(config):
             config.actor_rollout_ref.share_policy = config.trainer.get("share_policy", False)
             config.actor_rollout_ref.agent_names = config.trainer.get("agent_names", [])
-            # config.actor_rollout_ref.rollout.max_loras = len(config.actor_rollout_ref.agent_names)
+            config.actor_rollout_ref.rollout.max_loras = len(config.actor_rollout_ref.agent_names)
             config.actor_rollout_ref.ori_single_policy_no_lora_mode = config.trainer.get("ori_single_policy_no_lora_mode", False)
 
         # Download the checkpoint from HDFS to the local machine.

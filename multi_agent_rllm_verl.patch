@@ -154,8 +154,20 @@ index acf24398..4e4d2687 100644
                  if isinstance(lora_request, TensorLoRARequest):
                      lora = self._lora_model_cls.from_lora_tensors(
                          lora_model_id=lora_request.lora_int_id,
+diff --git a/verl/workers/config/rollout.py b/verl/workers/config/rollout.py
+index b3f2aca3..2183c47e 100644
+--- a/verl/workers/config/rollout.py
++++ b/verl/workers/config/rollout.py
+@@ -159,6 +159,7 @@ class RolloutConfig(BaseConfig):
+ 
+     multi_stage_wake_up: bool = False
+     engine_kwargs: dict = field(default_factory=dict)
++    max_loras: int = 1
+ 
+     calculate_log_probs: bool = False
+ 
 diff --git a/verl/workers/fsdp_workers.py b/verl/workers/fsdp_workers.py
-index 24be3893..a804fd93 100644
+index 24be3893..f0a97a94 100644
 --- a/verl/workers/fsdp_workers.py
 +++ b/verl/workers/fsdp_workers.py
 @@ -36,6 +36,8 @@ from torch.distributed.device_mesh import init_device_mesh
@@ -173,7 +185,7 @@ index 24be3893..a804fd93 100644
  
 +                # Check if multi-agent mode is enabled
 +                multi_agent_names = self.config.get("agent_names", [])
-+                if len(multi_agent_names) > 1 and (not self.config.get("share_policy")):
++                if len(multi_agent_names) >= 1 and (not self.config.get("share_policy")):
 +                    # Multi-agent: Initialize all LoRA adapters before FSDP wrapping
 +                    if self.rank == 0:
 +                        print(f"[Multi-Agent LoRA] Initializing {len(multi_agent_names)} adapters: {multi_agent_names}")
@@ -209,7 +221,7 @@ index 24be3893..a804fd93 100644
 +        agent_names = self.config.get("agent_names", [])
 +        is_multi_agent = (
 +            hasattr(peft_model, "peft_config")
-+            and len(agent_names) > 1
++            and len(agent_names) >= 1
 +            and not self.config.get("share_policy", False)
 +        )
 +
@@ -424,7 +436,7 @@ index 24be3893..a804fd93 100644
 +            lora_config: LoRA configuration dict (unused, for API compatibility)
 +        """
 +        multi_agent_names = self.config.get("agent_names", None)
-+        if not self._is_lora or not multi_agent_names or len(multi_agent_names) <= 1:
++        if not self._is_lora or not multi_agent_names or len(multi_agent_names) < 1:
 +            return  # Not multi-agent LoRA mode
 +
 +        if not self._is_actor:
@@ -521,16 +533,14 @@ index 24be3893..a804fd93 100644
      def init_model(self):
          from verl.workers.actor import DataParallelPPOActor
 diff --git a/verl/workers/rollout/vllm_rollout/vllm_async_server.py b/verl/workers/rollout/vllm_rollout/vllm_async_server.py
-index 287c8dc4..3515cc4d 100644
+index 287c8dc4..b37fb7e4 100644
 --- a/verl/workers/rollout/vllm_rollout/vllm_async_server.py
 +++ b/verl/workers/rollout/vllm_rollout/vllm_async_server.py
-@@ -269,13 +269,18 @@ class vLLMHttpServerBase:
+@@ -269,13 +269,16 @@ class vLLMHttpServerBase:
  
          # update lora-related args
          if self.model_config.lora_rank > 0:
-+            # Support multi-agent LoRA: set max_loras based on agent_names config
-+            agent_names = self.config.get("agent_names", [])
-+            max_loras = max(1, len(agent_names)) if agent_names else 1
++            max_loras = self.config.max_loras
              args.update(
                  {
                      "enable_lora": True,
@@ -539,12 +549,12 @@ index 287c8dc4..3515cc4d 100644
                      "max_lora_rank": get_vllm_max_lora_rank(self.model_config.lora_rank),
                  }
              )
-+            if self.replica_rank == 0 and max_loras > 1:
-+                logger.info(f"[Multi-Agent LoRA] Configured vLLM with max_loras={max_loras} for agents: {agent_names}")
++            if self.replica_rank == 0:
++                logger.info(f"[Multi-Agent LoRA] Configured vLLM with max_loras={max_loras}")
  
          server_args = ["serve", self.model_config.local_path]
          for k, v in args.items():
-@@ -376,6 +381,7 @@ class vLLMHttpServerBase:
+@@ -376,6 +379,7 @@ class vLLMHttpServerBase:
          sampling_params: dict[str, Any],
          request_id: str,
          image_data: Optional[list[Any]] = None,
@@ -552,7 +562,7 @@ index 287c8dc4..3515cc4d 100644
      ) -> TokenOutput:
          """Generate sequence with token-in-token-out."""
          # TODO(@wuxibin): switch to `/generate` http endpoint once multi-modal support ready.
-@@ -391,11 +397,17 @@ class vLLMHttpServerBase:
+@@ -391,11 +395,17 @@ class vLLMHttpServerBase:
          # Add lora request
          lora_request = None
          if self.model_config.lora_rank > 0:
@@ -573,9 +583,18 @@ index 287c8dc4..3515cc4d 100644
  
          generator = self.engine.generate(
 diff --git a/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py b/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py
-index 63af4f79..356c2ad8 100644
+index 63af4f79..e55b0e40 100644
 --- a/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py
 +++ b/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py
+@@ -148,7 +148,7 @@ class vLLMRollout(BaseRollout):
+             lora_rank = model_config.lora_rank
+ 
+         self.lora_kwargs = (
+-            {"enable_lora": True, "max_loras": 1, "max_lora_rank": get_vllm_max_lora_rank(lora_rank)}
++            {"enable_lora": True, "max_loras": config.max_loras, "max_lora_rank": get_vllm_max_lora_rank(lora_rank)}
+             if model_config.lora_rank > 0
+             else {}
+         )
 @@ -525,11 +525,15 @@ class vLLMAsyncRollout(BaseRollout):
          self.tokenizer = self.model_config.tokenizer
          self.inference_engine: WorkerWrapperBase = None
@@ -589,7 +608,7 @@ index 63af4f79..356c2ad8 100644
 +            # Support multi-agent LoRA: set max_loras based on agent_names config
 +            # max_loras = getattr(self.model_config, "max_loras", 1)
 +            self.lora_config = {
-+                "max_loras": 3, # Warning: Hardcoded for now. TODO: make it configurable
++                "max_loras": self.config.max_loras,
 +                "max_lora_rank": get_vllm_max_lora_rank(self.model_config.lora_rank),
 +            }
 +        else:
