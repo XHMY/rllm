@@ -36,6 +36,7 @@ Usage Examples:
 import argparse
 import asyncio
 import json
+import math
 import os
 import re
 import signal
@@ -107,6 +108,7 @@ class EvalResult:
 
     experiment_name: str
     checkpoint_step: int
+    dataset: str
     workflow_type: str
     model_size: str
     share_policy: bool
@@ -118,12 +120,17 @@ class EvalResult:
     problem_results: list[dict] = field(default_factory=list)
     hostname: str = field(default_factory=lambda: socket.gethostname())
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    n_rollouts: int = 1
+    mean_accuracy: float = 0.0
+    std_accuracy: float = 0.0
+    pass_at_n: float = 0.0
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON export."""
-        return {
+        d = {
             "timestamp": self.timestamp,
             "hostname": self.hostname,
+            "dataset": self.dataset,
             "experiment_name": self.experiment_name,
             "checkpoint_step": self.checkpoint_step,
             "workflow_type": self.workflow_type,
@@ -134,7 +141,12 @@ class EvalResult:
             "num_total": self.num_total,
             "eval_duration_seconds": round(self.eval_duration_seconds, 1),
             "eval_mode": self.eval_mode,
+            "n_rollouts": self.n_rollouts,
+            "mean_accuracy": round(self.mean_accuracy, 4),
+            "std_accuracy": round(self.std_accuracy, 4),
+            "pass_at_n": round(self.pass_at_n, 4),
         }
+        return d
 
 
 @dataclass
@@ -207,10 +219,8 @@ def parse_experiment_name(experiment_name: str) -> dict | None:
     if base_model is None:
         return None
 
-    # Determine if share_policy mode:
-    # - Explicit "share_policy" in name
-    # - OR single_agent workflow (only has one agent, so effectively share_policy)
-    share_policy = "share_policy" in experiment_name or workflow_type == "single_agent"
+    # Determine if share_policy mode from experiment name (hint only, auto-detected later)
+    share_policy = "share_policy" in experiment_name
 
     return {
         "workflow_type": workflow_type,
@@ -274,23 +284,20 @@ def discover_checkpoints(
                 print(f"Warning: Actor directory not found: {actor_path}")
                 continue
 
-            # Check for LoRA adapter(s)
-            if parsed["share_policy"]:
-                # share_policy mode: single lora_adapter/ directory
-                lora_adapter_path = actor_path / "lora_adapter"
-                if not lora_adapter_path.exists():
-                    print(f"Warning: LoRA adapter not found: {lora_adapter_path}")
-                    continue
+            # Auto-detect LoRA structure from actual directory contents
+            shared_lora_path = actor_path / "lora_adapter"
+            agent_names = AGENT_NAMES_MAP.get(parsed["workflow_type"], ["generator"])
+            per_agent_paths = [actor_path / f"lora_adapter_{agent}" for agent in agent_names]
+
+            if shared_lora_path.exists():
+                # Shared adapter found
+                detected_share_policy = True
+            elif all(p.exists() for p in per_agent_paths):
+                # Per-agent adapters found
+                detected_share_policy = False
             else:
-                # Multi-agent mode: lora_adapter_{agent}/ directories
-                agent_names = AGENT_NAMES_MAP.get(parsed["workflow_type"], ["generator"])
-                missing_adapters = [
-                    agent for agent in agent_names
-                    if not (actor_path / f"lora_adapter_{agent}").exists()
-                ]
-                if missing_adapters:
-                    print(f"Warning: LoRA adapters not found for agents {missing_adapters} in: {actor_path}")
-                    continue
+                print(f"Warning: No valid LoRA adapter found in: {actor_path}")
+                continue
 
             checkpoints.append(
                 CheckpointInfo(
@@ -300,7 +307,7 @@ def discover_checkpoints(
                     base_model=parsed["base_model"],
                     checkpoint_step=checkpoint_step,
                     actor_path=str(actor_path),
-                    share_policy=parsed["share_policy"],
+                    share_policy=detected_share_policy,
                 )
             )
 
@@ -684,6 +691,8 @@ async def evaluate_checkpoint(
     eval_mode: EvalMode = EvalMode.TRAINED_CHECKPOINT,
     single_agent_lora_path: str = None,
     trajectory_output_dir: str = None,
+    dataset_name: str = None,
+    n_rollouts: int = 1,
 ) -> EvalResult:
     """Evaluate a single checkpoint on the dataset.
 
@@ -695,7 +704,9 @@ async def evaluate_checkpoint(
         n_parallel: Number of parallel workflow instances.
         eval_mode: Evaluation mode (trained_checkpoint, base_model, single_agent_transfer).
         single_agent_lora_path: Path to single-agent LoRA for transfer mode.
-
+        trajectory_output_dir: Directory to save detailed trajectory JSON files.
+        dataset_name: Name of the dataset being evaluated.
+        n_rollouts: Number of independent rollouts per sample.
     Returns:
         EvalResult with accuracy and metrics.
     """
@@ -705,6 +716,7 @@ async def evaluate_checkpoint(
     print(f"  Actor Path: {checkpoint.actor_path}")
     print(f"  Share Policy: {checkpoint.share_policy}")
     print(f"  Eval Mode: {eval_mode.value}")
+    print(f"  N Rollouts: {n_rollouts}")
     print(f"{'='*60}")
 
     start_time = time.time()
@@ -732,8 +744,9 @@ async def evaluate_checkpoint(
         workflow_kwargs["max_subtasks"] = 3
 
     # Run parallel evaluation with semaphore
+    total_tasks = len(dataset) * n_rollouts
     semaphore = asyncio.Semaphore(n_parallel)
-    progress_bar = tqdm(total=len(dataset), desc="Evaluating")
+    progress_bar = tqdm(total=total_tasks, desc="Evaluating")
 
     async def evaluate_single(task: dict, uid: str) -> Episode | Exception:
         async with semaphore:
@@ -747,59 +760,103 @@ async def evaluate_checkpoint(
             finally:
                 progress_bar.update(1)
 
-    # Execute all tasks in parallel
-    tasks = [
-        evaluate_single(task, f"eval_{i}")
-        for i, task in enumerate(dataset)
-    ]
-    episodes = await asyncio.gather(*tasks)
+    # Build all tasks: N rollouts per sample, all run concurrently
+    all_tasks = []
+    for i, task in enumerate(dataset):
+        for j in range(n_rollouts):
+            if n_rollouts == 1:
+                uid = f"eval_{i}"
+            else:
+                uid = f"eval_{i}_run_{j}"
+            all_tasks.append(evaluate_single(task, uid))
+
+    all_episodes = await asyncio.gather(*all_tasks)
     progress_bar.close()
 
-    # Collect results
+    # Reshape results: episodes_by_problem[i][j] = episode for problem i, rollout j
+    episodes_by_problem: list[list[Episode | Exception]] = []
+    idx = 0
+    for i in range(len(dataset)):
+        runs = []
+        for j in range(n_rollouts):
+            runs.append(all_episodes[idx])
+            idx += 1
+        episodes_by_problem.append(runs)
+
+    # Compute per-problem results
     problem_results = []
-    num_correct = 0
-
-    for i, episode in enumerate(episodes):
-        if isinstance(episode, Episode):
-            is_correct = episode.is_correct
-            metrics = episode.metrics
-        else:
-            is_correct = False
-            metrics = {"error": str(episode)}
-
+    for i, runs in enumerate(episodes_by_problem):
+        per_run = []
+        for episode in runs:
+            if isinstance(episode, Episode):
+                per_run.append(episode.is_correct)
+            else:
+                per_run.append(False)
+        n_correct = sum(per_run)
         problem_results.append({
             "uid": f"eval_{i}",
-            "is_correct": is_correct,
-            "metrics": metrics,
+            "n_correct": n_correct,
+            "n_rollouts": n_rollouts,
+            "pass": any(per_run),
+            "per_run": per_run,
         })
-        if is_correct:
-            num_correct += 1
+
+    # Compute per-rollout accuracies (for each rollout j, how many problems correct)
+    per_rollout_accuracies = []
+    for j in range(n_rollouts):
+        correct_in_run = sum(
+            1 for i in range(len(dataset))
+            if problem_results[i]["per_run"][j]
+        )
+        per_rollout_accuracies.append(correct_in_run / len(dataset) if dataset else 0.0)
+
+    mean_accuracy = sum(per_rollout_accuracies) / len(per_rollout_accuracies)
+    if n_rollouts > 1:
+        variance = sum((a - mean_accuracy) ** 2 for a in per_rollout_accuracies) / n_rollouts
+        std_accuracy = math.sqrt(variance)
+    else:
+        std_accuracy = 0.0
+
+    # Pass@N: fraction of problems where at least 1 rollout is correct
+    pass_at_n = sum(1 for pr in problem_results if pr["pass"]) / len(dataset) if dataset else 0.0
+
+    # For backward compat, num_correct derived from mean accuracy
+    num_correct = round(mean_accuracy * len(dataset))
 
     # Save detailed trajectories if output directory specified
     if trajectory_output_dir:
         checkpoint_name = f"{checkpoint.experiment_name}_step{checkpoint.checkpoint_step}"
-        for episode in episodes:
-            if isinstance(episode, Episode):
-                save_trajectory_to_json(episode, trajectory_output_dir, checkpoint_name)
+        for i, runs in enumerate(episodes_by_problem):
+            for j, episode in enumerate(runs):
+                if isinstance(episode, Episode):
+                    save_trajectory_to_json(episode, trajectory_output_dir, checkpoint_name)
 
     eval_duration = time.time() - start_time
-    accuracy = num_correct / len(dataset) if dataset else 0.0
 
-    print(f"\nResults: {num_correct}/{len(dataset)} correct ({accuracy:.2%})")
-    print(f"Duration: {eval_duration:.1f}s")
+    print(f"\nResults (N={n_rollouts}):")
+    print(f"  Mean Accuracy: {mean_accuracy:.2%}")
+    if n_rollouts > 1:
+        print(f"  Std Accuracy:  {std_accuracy:.2%}")
+        print(f"  Pass@{n_rollouts}:       {pass_at_n:.2%}")
+    print(f"  Duration: {eval_duration:.1f}s")
 
     return EvalResult(
         experiment_name=checkpoint.experiment_name,
         checkpoint_step=checkpoint.checkpoint_step,
+        dataset=dataset_name,
         workflow_type=checkpoint.workflow_type,
         model_size=checkpoint.model_size,
         share_policy=checkpoint.share_policy,
-        accuracy=accuracy,
+        accuracy=mean_accuracy,
         num_correct=num_correct,
         num_total=len(dataset),
         eval_duration_seconds=eval_duration,
         eval_mode=eval_mode.value,
         problem_results=problem_results,
+        n_rollouts=n_rollouts,
+        mean_accuracy=mean_accuracy,
+        std_accuracy=std_accuracy,
+        pass_at_n=pass_at_n,
     )
 
 
@@ -997,6 +1054,8 @@ def main(args):
                             eval_mode=eval_mode,
                             single_agent_lora_path=args.single_agent_lora_path,
                             trajectory_output_dir=args.trajectory_output_dir,
+                            dataset_name=args.dataset,
+                            n_rollouts=args.n_rollouts,
                         )
                     )
                     all_results.append(result)
@@ -1027,18 +1086,37 @@ def main(args):
     print(f"Results appended to: {args.output_json}")
 
     if all_results:
+        has_multi_rollout = any(r.n_rollouts > 1 for r in all_results)
         print("\nSummary:")
-        print(f"{'Experiment':<50} {'Step':>6} {'Accuracy':>10} {'Mode':<25}")
-        print("-" * 95)
+        if has_multi_rollout:
+            print(
+                f"{'Experiment':<50} {'Step':>6} {'N':>3} "
+                f"{'Mean Acc':>10} {'Std Acc':>10} {'Pass@N':>10} {'Mode':<25}"
+            )
+            print("-" * 118)
+        else:
+            print(f"{'Experiment':<50} {'Step':>6} {'Accuracy':>10} {'Mode':<25}")
+            print("-" * 95)
         for result in sorted(
             all_results, key=lambda x: (x.experiment_name, x.checkpoint_step)
         ):
-            print(
-                f"{result.experiment_name:<50} "
-                f"{result.checkpoint_step:>6} "
-                f"{result.accuracy:>10.2%} "
-                f"{result.eval_mode:<25}"
-            )
+            if has_multi_rollout:
+                print(
+                    f"{result.experiment_name:<50} "
+                    f"{result.checkpoint_step:>6} "
+                    f"{result.n_rollouts:>3} "
+                    f"{result.mean_accuracy:>10.2%} "
+                    f"{result.std_accuracy:>10.2%} "
+                    f"{result.pass_at_n:>10.2%} "
+                    f"{result.eval_mode:<25}"
+                )
+            else:
+                print(
+                    f"{result.experiment_name:<50} "
+                    f"{result.checkpoint_step:>6} "
+                    f"{result.accuracy:>10.2%} "
+                    f"{result.eval_mode:<25}"
+                )
 
 
 # ============================================================================
@@ -1181,6 +1259,12 @@ def parse_args():
         type=str,
         default=None,
         help="Directory to save detailed trajectory JSON files (one per problem)",
+    )
+    parser.add_argument(
+        "--n-rollouts",
+        type=int,
+        default=1,
+        help="Number of independent rollouts per sample for computing mean/std accuracy and Pass@N",
     )
 
     return parser.parse_args()
