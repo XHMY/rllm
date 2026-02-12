@@ -46,6 +46,7 @@ class OrchestratorWorkersMathWorkflow(OrchestratorWorkersWorkflow):
         prompt_file: str = "examples/math_reasoning/prompt.json",
         max_subtasks: int = 4,
         use_final_outcome_reward: bool = True,
+        share_context_with_workers: bool = True,
         **kwargs,
     ):
         """Initialize the math orchestrator-workers workflow.
@@ -64,7 +65,7 @@ class OrchestratorWorkersMathWorkflow(OrchestratorWorkersWorkflow):
             max_subtasks=max_subtasks,
             default_execution_mode="parallel",
             use_final_outcome_reward=use_final_outcome_reward,
-            share_context_with_workers=True,
+            share_context_with_workers=share_context_with_workers,
             **kwargs,
         )
         self.reward_function = reward_function

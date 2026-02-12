@@ -68,6 +68,7 @@ from rllm.data.dataset import DatasetRegistry
 from rllm.engine.rollout.openai_engine import OpenAIEngine
 from rllm.engine.rollout.rollout_engine import ModelOutput
 from rllm.rewards.reward_fn import math_reward_fn
+from rllm.workflows import TerminationEvent
 
 os.environ["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
 
@@ -693,6 +694,7 @@ async def evaluate_checkpoint(
     trajectory_output_dir: str = None,
     dataset_name: str = None,
     n_rollouts: int = 1,
+    share_context_with_workers: bool = True,
 ) -> EvalResult:
     """Evaluate a single checkpoint on the dataset.
 
@@ -707,6 +709,7 @@ async def evaluate_checkpoint(
         trajectory_output_dir: Directory to save detailed trajectory JSON files.
         dataset_name: Name of the dataset being evaluated.
         n_rollouts: Number of independent rollouts per sample.
+        share_context_with_workers: Whether to share context with workers in orchestrator-workers workflow.
     Returns:
         EvalResult with accuracy and metrics.
     """
@@ -742,21 +745,22 @@ async def evaluate_checkpoint(
         workflow_kwargs["max_iterations"] = 3
     if checkpoint.workflow_type == "orchestrator_workers":
         workflow_kwargs["max_subtasks"] = 3
+        workflow_kwargs["share_context_with_workers"] = share_context_with_workers
 
     # Run parallel evaluation with semaphore
     total_tasks = len(dataset) * n_rollouts
     semaphore = asyncio.Semaphore(n_parallel)
     progress_bar = tqdm(total=total_tasks, desc="Evaluating")
 
-    async def evaluate_single(task: dict, uid: str) -> Episode | Exception:
+    async def evaluate_single(task: dict, uid: str) -> Episode | None:
         async with semaphore:
             try:
                 workflow = workflow_cls(rollout_engine=engine, **workflow_kwargs)
                 result = await workflow.run(task, uid)
                 return result
-            except Exception as e:
-                print(f"Error evaluating task {uid}: {e}")
-                return e
+            except TerminationEvent:
+                print(f"Task {uid}: prompt length exceeded, marking as incorrect")
+                return None
             finally:
                 progress_bar.update(1)
 
@@ -883,6 +887,18 @@ def save_trajectory_to_json(episode: Episode, output_dir: str, checkpoint_name: 
 
     # Serialize the full episode
     episode_dict = episode.to_dict()
+
+    # Remove large token ID lists from steps to reduce file size
+    for traj in episode_dict.get("trajectories", []):
+        for step in traj.get("steps", []):
+            step.pop("prompt_ids", None)
+            step.pop("response_ids", None)
+            step.pop("logprobs", None)
+            model_output = step.get("model_output")
+            if isinstance(model_output, dict):
+                model_output.pop("prompt_ids", None)
+                model_output.pop("response_ids", None)
+                model_output.pop("completion_ids", None)
 
     with open(filepath, "w") as f:
         json.dump(episode_dict, f, indent=2)
@@ -1039,6 +1055,7 @@ def main(args):
                     "temperature": args.temperature,
                 },
                 disable_thinking=True,
+                api_retries=1,  # Disable retries to surface errors immediately
             )
 
             # Evaluate all checkpoints for this model
@@ -1056,6 +1073,7 @@ def main(args):
                             trajectory_output_dir=args.trajectory_output_dir,
                             dataset_name=args.dataset,
                             n_rollouts=args.n_rollouts,
+                            share_context_with_workers=not args.not_share_context_with_workers,
                         )
                     )
                     all_results.append(result)
@@ -1209,7 +1227,7 @@ def parse_args():
     parser.add_argument(
         "--max-prompt-length",
         type=int,
-        default=16384,
+        default=30720,
         help="Max prompt length in tokens",
     )
     parser.add_argument(
@@ -1265,6 +1283,12 @@ def parse_args():
         type=int,
         default=1,
         help="Number of independent rollouts per sample for computing mean/std accuracy and Pass@N",
+    )
+    parser.add_argument(
+        "--not_share_context_with_workers",
+        action="store_false",
+        dest="share_context_with_workers",
+        help="Whether to share context with workers in orchestrator-workers workflow (default: True)",
     )
 
     return parser.parse_args()

@@ -160,7 +160,7 @@ class OpenAIEngine(RolloutEngine):
         retries = self.api_retries
         while retries > 0:
             try:
-                response = await self.client.completions.create(model=self.model, prompt=prompt, **sampling_params)
+                response = await self.client.completions.create(model=self.model, prompt=prompt, timeout=3600, **sampling_params)
                 text = response.choices[0].text
                 try:
                     completion_ids = response.choices[0].token_ids
