@@ -30,9 +30,10 @@ python3 -m examples.deepcoder.train_deepcoder_evaluator_optimizer \
     actor_rollout_ref.model.path=Qwen/Qwen3-1.7B \
     trainer.project_name='rllm-workflow-MARL-v2' \
     trainer.experiment_name='evaluator_optimizer-qwen3_1.7b-deepcoder' \
-    trainer.n_gpus_per_node=1 \
+    trainer.n_gpus_per_node=2 \
     trainer.share_policy=False \
     trainer.agent_names=['generator','evaluator'] \
+    rllm.workflow.use_final_outcome_reward=true \
     rllm.workflow.n_parallel_tasks=1024 \
     +rllm.workflow.max_iterations=2 \
     +rllm.workflow.enable_test_loop=False

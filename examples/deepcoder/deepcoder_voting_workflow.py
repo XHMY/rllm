@@ -60,6 +60,7 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
         max_test_rounds: int = 2,
         max_tests_to_show: int = 3,
         public_test_only: bool = False,
+        use_final_outcome_reward: bool = False,
         **kwargs,
     ):
         """Initialize the code voting workflow.
@@ -78,6 +79,7 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
         super().__init__(
             rollout_engine=rollout_engine,
             n_votes=n_votes,
+            use_final_outcome_reward=use_final_outcome_reward,
             **kwargs,
         )
         self._prompts = prompts
@@ -356,6 +358,15 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
         any_correct = generator_correct_count > 0
         final_is_correct = agg_reward.is_correct
 
+        # If use_final_outcome_reward is enabled, propagate the final reward
+        # to all trajectories (all generators + aggregator)
+        if self.use_final_outcome_reward:
+            final_reward_value = agg_reward.reward
+            for trajectory in all_trajectories:
+                trajectory.reward = final_reward_value
+                for step in trajectory.steps:
+                    step.reward = final_reward_value
+
         metrics = {
             f"{self.GENERATOR_NAME}_acc": generator_correct_count / self.n_votes,
             f"{self.AGGREGATOR_NAME}_acc": float(final_is_correct),
@@ -477,6 +488,14 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
         for traj in aggregator_trajs:
             traj.steps[0].reward = final_reward
             traj.reward = final_reward
+
+        # If use_final_outcome_reward is enabled, propagate the final reward
+        # to all trajectories (all generators + aggregator)
+        if self.use_final_outcome_reward:
+            for trajectory in all_trajectories:
+                trajectory.reward = final_reward
+                for step in trajectory.steps:
+                    step.reward = final_reward
 
         # Compute metrics
         n_aggregator_trajs = sum(

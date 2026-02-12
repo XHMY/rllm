@@ -48,6 +48,7 @@ def main(config):
     max_test_rounds = 2  # Outer test loop (when enable_test_loop=True)
     max_tests_to_show = 3
     public_test_only = False
+    use_final_outcome_reward = False
 
     if hasattr(config, "rllm") and hasattr(config.rllm, "workflow"):
         max_iterations = getattr(config.rllm.workflow, "max_iterations", 2)
@@ -55,6 +56,7 @@ def main(config):
         max_test_rounds = getattr(config.rllm.workflow, "max_test_rounds", 2)
         max_tests_to_show = getattr(config.rllm.workflow, "max_tests_to_show", 3)
         public_test_only = getattr(config.rllm.workflow, "public_test_only", False)
+        use_final_outcome_reward = getattr(config.rllm.workflow, "use_final_outcome_reward", False)
 
     trainer = AgentTrainer(
         workflow_class=DeepcodeEvaluatorOptimizerWorkflow,
@@ -64,6 +66,7 @@ def main(config):
             "max_test_rounds": max_test_rounds,
             "max_tests_to_show": max_tests_to_show,
             "public_test_only": public_test_only,
+            "use_final_outcome_reward": use_final_outcome_reward,
         },
         config=config,
         train_dataset=train_dataset,

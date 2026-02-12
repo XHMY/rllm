@@ -82,6 +82,7 @@ class DeepcodeEvaluatorOptimizerWorkflow(CodeTestLoopMixin, EvaluatorOptimizerWo
         max_test_rounds: int = 2,
         max_tests_to_show: int = 3,
         public_test_only: bool = False,
+        use_final_outcome_reward: bool = False,
         **kwargs,
     ):
         """Initialize the Deepcoder evaluator-optimizer workflow.
@@ -101,6 +102,7 @@ class DeepcodeEvaluatorOptimizerWorkflow(CodeTestLoopMixin, EvaluatorOptimizerWo
             rollout_engine=rollout_engine,
             max_iterations=max_iterations,
             share_conversation_history=True,
+            use_final_outcome_reward=use_final_outcome_reward,
             **kwargs,
         )
         self._prompts = prompts
@@ -443,6 +445,15 @@ class DeepcodeEvaluatorOptimizerWorkflow(CodeTestLoopMixin, EvaluatorOptimizerWo
                 if evaluator_correct:
                     evaluator_correct_count += 1
 
+        # If use_final_outcome_reward is enabled, propagate the final reward
+        # to all trajectories (both generator and evaluator, all iterations)
+        if self.use_final_outcome_reward:
+            final_reward_value = reward_output.reward
+            for trajectory in all_trajectories:
+                trajectory.reward = final_reward_value
+                for step in trajectory.steps:
+                    step.reward = final_reward_value
+
         # Compute metrics
         reward_metadata = reward_output.metadata or {}
         passed_tests = reward_metadata.get("passed_tests", 0)
@@ -674,6 +685,15 @@ class DeepcodeEvaluatorOptimizerWorkflow(CodeTestLoopMixin, EvaluatorOptimizerWo
                     step.reward = reward
                 if evaluator_correct:
                     evaluator_correct_count += 1
+
+        # If use_final_outcome_reward is enabled, propagate the final reward
+        # to all trajectories (both generator and evaluator, all iterations)
+        if self.use_final_outcome_reward:
+            final_reward = 1.0 if test_passed else 0.0
+            for trajectory in all_trajectories:
+                trajectory.reward = final_reward
+                for step in trajectory.steps:
+                    step.reward = final_reward
 
         # Compute metrics
         metrics = {

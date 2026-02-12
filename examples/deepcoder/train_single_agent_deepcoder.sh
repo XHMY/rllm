@@ -21,13 +21,13 @@ export VLLM_LOGGING_LEVEL=INFO
 export VERL_LOGGING_LEVEL=INFO
 
 python3 -m examples.deepcoder.train_single_agent_deepcoder \
-    data.max_prompt_length=30720 \
+    data.max_prompt_length=4096 \
     data.max_response_length=2048 \
-    actor_rollout_ref.model.path=Qwen/Qwen3-1.7B \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=51200 \
+    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=20480 \
     trainer.project_name='rllm-workflow-MARL-v2-deepcoder' \
-    trainer.experiment_name='single_agent-qwen3_1.7b-deepcoder' \
-    trainer.n_gpus_per_node=2 \
+    trainer.experiment_name='single_agent-qwen3_4b-deepcoder' \
+    trainer.n_gpus_per_node=4 \
     trainer.share_policy=False \
     trainer.agent_names=['generator'] \
     trainer.log_episodes=False \
