@@ -40,10 +40,14 @@ def main(config):
     # Get workflow config parameters
     max_subtasks = 4
     use_final_outcome_reward = True
+    share_context_with_workers = True
     if hasattr(config, "rllm") and hasattr(config.rllm, "workflow"):
         max_subtasks = getattr(config.rllm.workflow, "max_subtasks", 4)
         use_final_outcome_reward = getattr(
             config.rllm.workflow, "use_final_outcome_reward", True
+        )
+        share_context_with_workers = getattr(
+            config.rllm.workflow, "share_context_with_workers", True
         )
 
     trainer = AgentTrainer(
@@ -52,6 +56,7 @@ def main(config):
             "max_subtasks": max_subtasks,
             "reward_function": math_reward_fn,
             "use_final_outcome_reward": use_final_outcome_reward,
+            "share_context_with_workers": share_context_with_workers
         },
         config=config,
         train_dataset=train_dataset,
