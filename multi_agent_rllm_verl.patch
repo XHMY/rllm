@@ -167,7 +167,7 @@ index b3f2aca3..2183c47e 100644
      calculate_log_probs: bool = False
  
 diff --git a/verl/workers/fsdp_workers.py b/verl/workers/fsdp_workers.py
-index 24be3893..f0a97a94 100644
+index 24be3893..64c0bb05 100644
 --- a/verl/workers/fsdp_workers.py
 +++ b/verl/workers/fsdp_workers.py
 @@ -36,6 +36,8 @@ from torch.distributed.device_mesh import init_device_mesh
@@ -179,7 +179,7 @@ index 24be3893..f0a97a94 100644
  try:
      # for torch 2.5+
      from torch.distributed.tensor import DTensor
-@@ -438,6 +440,30 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+@@ -438,6 +440,43 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                  }
                  actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))
  
@@ -190,11 +190,24 @@ index 24be3893..f0a97a94 100644
 +                    if self.rank == 0:
 +                        print(f"[Multi-Agent LoRA] Initializing {len(multi_agent_names)} adapters: {multi_agent_names}")
 +
++                    initial_lora_adapters = self.config.get("initial_lora_adapters", {})
++
 +                    for adapter_name in multi_agent_names:
 +                        if adapter_name != "default":
-+                            actor_module.add_adapter(adapter_name=adapter_name, peft_config=LoraConfig(**lora_config))
-+                            if self.rank == 0:
-+                                print(f"[Multi-Agent LoRA] Added adapter: {adapter_name}")
++                            adapter_path = initial_lora_adapters.get(adapter_name) if initial_lora_adapters else None
++                            if adapter_path:
++                                # Load pre-trained adapter weights
++                                local_adapter_path = copy_to_local(adapter_path, use_shm=self.config.model.get("use_shm", False))
++                                actor_module.load_adapter(local_adapter_path, adapter_name=adapter_name, is_trainable=True)
++                                if isinstance(actor_module.peft_config[adapter_name].task_type, str):
++                                    actor_module.peft_config[adapter_name].task_type = TaskType.CAUSAL_LM
++                                if self.rank == 0:
++                                    print(f"[Multi-Agent LoRA] Loaded pre-trained adapter '{adapter_name}' from: {adapter_path}")
++                            else:
++                                # Fresh random init
++                                actor_module.add_adapter(adapter_name=adapter_name, peft_config=LoraConfig(**lora_config))
++                                if self.rank == 0:
++                                    print(f"[Multi-Agent LoRA] Added fresh adapter: {adapter_name}")
 +
 +                    # FSDP auto wrapping requires all parameters to have requires_grad set correctly
 +                    for name, param in actor_module.named_parameters():
@@ -210,7 +223,7 @@ index 24be3893..f0a97a94 100644
          self.use_orig_params = fsdp_config.get("use_orig_params", False)
          if self.config.actor.get("freeze_vision_tower", False):
              vision_tower = get_vl_model_vision_tower(actor_module)
-@@ -657,8 +683,31 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+@@ -657,8 +696,31 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
              load_fsdp_model_to_gpu(self.actor_module_fsdp)
          log_gpu_memory_usage("After load_fsdp_model_to_gpu", logger=logger)
  
@@ -243,7 +256,7 @@ index 24be3893..f0a97a94 100644
          if hasattr(peft_model, "peft_config"):  # LoRA
              peft_config = peft_model.peft_config.get("default", None)
              params = collect_lora_params(
-@@ -726,10 +775,173 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+@@ -726,10 +788,173 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
              await self.rollout.resume(tags=["kv_cache"])
          log_gpu_memory_usage("After resume kv_cache", logger=logger)
  
@@ -421,7 +434,7 @@ index 24be3893..f0a97a94 100644
  
      async def trainer_mode(self):
          """Context switch hybridengine to trainer mode."""
-@@ -749,6 +961,110 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+@@ -749,6 +974,110 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
          self.gen_random_states = get_torch_device().get_rng_state()
          get_torch_device().set_rng_state(self.torch_random_states)
  

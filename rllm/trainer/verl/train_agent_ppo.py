@@ -183,6 +183,19 @@ class TaskRunner:
                         else:
                             workflow_args[key] = value
 
+            # Extract initial_lora_weights and inject into actor config
+            initial_lora_weights = workflow_args.pop("initial_lora_weights", None)
+            if initial_lora_weights:
+                with open_dict(config):
+                    if config.actor_rollout_ref.get("share_policy"):
+                        # share_policy=True: load generator LoRA as the "default" adapter
+                        generator_path = initial_lora_weights.get("generator") or next(iter(initial_lora_weights.values()), None)
+                        if generator_path:
+                            config.actor_rollout_ref.model.lora_adapter_path = generator_path
+                    else:
+                        # share_policy=False: pass per-agent adapter paths to FSDP worker
+                        config.actor_rollout_ref.initial_lora_adapters = initial_lora_weights
+
             trainer = AgentWorkflowPPOTrainer(
                 config=config,
                 tokenizer=tokenizer,

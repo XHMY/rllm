@@ -30,7 +30,7 @@ class TerminationEvent(Exception):
 
 
 class Workflow(ABC):
-    def __init__(self, rollout_engine: RolloutEngine, executor: ThreadPoolExecutor = None, timeout=1e6, gamma=0.0, reward_bonus_coeff=0.0, **kwargs):
+    def __init__(self, rollout_engine: RolloutEngine, executor: ThreadPoolExecutor = None, timeout=1e6, gamma=0.0, reward_bonus_coeff=0.0, initial_lora_weights: dict | None = None, **kwargs):
         """Initialize the Workflow.
 
         Args:
@@ -39,6 +39,7 @@ class Workflow(ABC):
             timeout: The timeout for the workflow.
             gamma: The discount factor for the workflow.
             reward_bonus_coeff: The reward bonus coefficient for the workflow.
+            initial_lora_weights: Per-agent LoRA adapter paths for warm-starting (e.g., {"generator": "/path/to/adapter"}).
             **kwargs: Additional keyword arguments.
         """
         self.rollout_engine = rollout_engine
@@ -46,6 +47,7 @@ class Workflow(ABC):
         self.timeout = int(timeout)
         self.gamma = gamma
         self.reward_bonus_coeff = reward_bonus_coeff
+        self.initial_lora_weights = initial_lora_weights
 
         self._completed_trajectories: list[Trajectory] = []
 

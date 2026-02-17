@@ -50,13 +50,28 @@ def main(config):
             config.rllm.workflow, "share_context_with_workers", True
         )
 
+    # Get initial_lora_weights from config if specified
+    # Remap "generator" -> "worker" since checkpoints use "generator" but
+    # this workflow's agent name is "worker"
+    initial_lora_weights = None
+    if hasattr(config, "rllm") and hasattr(config.rllm, "workflow"):
+        initial_lora_weights_cfg = getattr(
+            config.rllm.workflow, "initial_lora_weights", None
+        )
+        if initial_lora_weights_cfg is not None:
+            initial_lora_weights = dict(initial_lora_weights_cfg)
+            # Remap: checkpoint adapter "generator" -> workflow agent "worker"
+            if "generator" in initial_lora_weights and "worker" not in initial_lora_weights:
+                initial_lora_weights["worker"] = initial_lora_weights.pop("generator")
+
     trainer = AgentTrainer(
         workflow_class=OrchestratorWorkersMathWorkflow,
         workflow_args={
             "max_subtasks": max_subtasks,
             "reward_function": math_reward_fn,
             "use_final_outcome_reward": use_final_outcome_reward,
-            "share_context_with_workers": share_context_with_workers
+            "share_context_with_workers": share_context_with_workers,
+            "initial_lora_weights": initial_lora_weights,
         },
         config=config,
         train_dataset=train_dataset,

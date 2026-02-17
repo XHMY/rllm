@@ -46,12 +46,22 @@ def main(config):
             config.rllm.workflow, "use_final_outcome_reward", False
         )
 
+    # Get initial_lora_weights from config if specified
+    initial_lora_weights = None
+    if hasattr(config, "rllm") and hasattr(config.rllm, "workflow"):
+        initial_lora_weights_cfg = getattr(
+            config.rllm.workflow, "initial_lora_weights", None
+        )
+        if initial_lora_weights_cfg is not None:
+            initial_lora_weights = dict(initial_lora_weights_cfg)
+
     trainer = AgentTrainer(
         workflow_class=EvaluatorOptimizerMathWorkflow,
         workflow_args={
             "max_iterations": max_iterations,
             "reward_function": math_reward_fn,
             "use_final_outcome_reward": use_final_outcome_reward,
+            "initial_lora_weights": initial_lora_weights,
         },
         config=config,
         train_dataset=train_dataset,
