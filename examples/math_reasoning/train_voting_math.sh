@@ -1,12 +1,18 @@
 #!/bin/bash
-# Training script for Voting Math Workflow (parallel generation + aggregation pattern)
-#
-# This script trains a 2-agent workflow:
-# - Generator: Creates N solutions in parallel
-# - Aggregator: Reviews all solutions and selects the best one
-#
-# Usage: bash examples/math_reasoning/train_voting_math.sh
+#SBATCH --job-name=verl-ray
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
+#SBATCH --partition=dgxh
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-gpu=8
+#SBATCH --mem-per-gpu=128G
+#SBATCH --exclude=dgxh-1
+#SBATCH --time=1-00:00:00
 
+unset ROCR_VISIBLE_DEVICES
+unset HIP_VISIBLE_DEVICES
+conda activate rllm
 set -x
 
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
@@ -17,7 +23,6 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
 export VLLM_LOGGING_LEVEL=INFO
 export VERL_LOGGING_LEVEL=INFO
-export CUDA_VISIBLE_DEVICES=4,5
 
 python3 -m examples.math_reasoning.train_voting_math \
     data.max_prompt_length=30720 \

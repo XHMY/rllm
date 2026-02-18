@@ -1,11 +1,18 @@
 #!/bin/bash
-# Training script for Evaluator-Optimizer Math Workflow (2-agent pattern)
-#
-# This script trains a 2-agent workflow:
-# - Generator: Creates initial solution AND refines based on feedback
-# - Evaluator: Reviews solutions and provides feedback
-#
-# Usage: bash examples/math_reasoning/train_evaluator_optimizer_math.sh
+#SBATCH --job-name=verl-ray
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
+#SBATCH --partition=dgxh
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-gpu=8
+#SBATCH --mem-per-gpu=128G
+#SBATCH --exclude=dgxh-1
+#SBATCH --time=1-00:00:00
+
+unset ROCR_VISIBLE_DEVICES
+unset HIP_VISIBLE_DEVICES
+conda activate rllm
 
 set -x
 
@@ -17,7 +24,6 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
 export VLLM_LOGGING_LEVEL=INFO
 export VERL_LOGGING_LEVEL=INFO
-export CUDA_VISIBLE_DEVICES=2,3
 
 python3 -m examples.math_reasoning.train_evaluator_optimizer_math \
     data.max_prompt_length=30720 \
