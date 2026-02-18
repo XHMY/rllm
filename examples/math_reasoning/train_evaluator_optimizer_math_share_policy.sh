@@ -12,7 +12,7 @@
 
 unset ROCR_VISIBLE_DEVICES
 unset HIP_VISIBLE_DEVICES
-conda activate rllm
+source ~/.bashrc && conda activate rllm
 
 set -x
 
