@@ -29,13 +29,22 @@ python3 -m examples.math_reasoning.train_evaluator_optimizer_math \
     data.max_prompt_length=30720 \
     data.max_response_length=5120 \
     actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_1.7b_s430 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.85 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    trainer.experiment_name='evaluator_optimizer-qwen3_1.7b_s430-share_policy-math' \
+    trainer.experiment_name='evaluator_optimizer-qwen3_1.7b_s430-math-per_agent_reward' \
     trainer.n_gpus_per_node=2 \
     trainer.agent_names=['generator','evaluator'] \
-    +rllm.workflow.max_iterations=3 \
-    trainer.share_policy=True \
-    rllm.workflow.use_final_outcome_reward=true \
-    trainer.total_training_steps=400
+    rllm.workflow.use_final_outcome_reward=false \
+    +rllm.workflow.max_iterations=3
+
+
+# To warm-start generator from a single-agent checkpoint:
+# +rllm.workflow.initial_lora_weights.generator=/path/to/checkpoints/.../actor/lora_adapter_generator
+
+# To use final outcome reward for entire trajectory (experimental):
+# This assigns the final episode outcome reward to ALL trajectories,
+# testing whether multi-agent training can converge without fine-grained
+# per-agent reward feedback.
+# rllm.workflow.use_final_outcome_reward=true
 
 # pkill -9 -f 'ray::WorkerDict'

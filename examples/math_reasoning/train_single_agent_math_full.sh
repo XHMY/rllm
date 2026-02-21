@@ -25,17 +25,23 @@ export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
 export VLLM_LOGGING_LEVEL=INFO
 export VERL_LOGGING_LEVEL=INFO
 
-python3 -m examples.math_reasoning.train_evaluator_optimizer_math \
-    data.max_prompt_length=30720 \
+python3 -m examples.math_reasoning.train_single_agent_math \
+    data.max_prompt_length=15360 \
     data.max_response_length=5120 \
-    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_1.7b_s430 \
+    actor_rollout_ref.model.path=Qwen/Qwen3-1.7B \
+    actor_rollout_ref.model.lora_rank=0 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=51200 \
+    actor_rollout_ref.actor.optim.lr=2e-6 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    trainer.experiment_name='evaluator_optimizer-qwen3_1.7b_s430-share_policy-math' \
+    trainer.experiment_name='qwen3_1.7b-fullp-math_single_agent' \
     trainer.n_gpus_per_node=2 \
-    trainer.agent_names=['generator','evaluator'] \
-    +rllm.workflow.max_iterations=3 \
-    trainer.share_policy=True \
-    rllm.workflow.use_final_outcome_reward=true \
-    trainer.total_training_steps=400
+    trainer.val_before_train=false \
+    trainer.agent_names=['generator'] \
+    trainer.share_policy=true \
+    trainer.total_training_steps=300
 
-# pkill -9 -f 'ray::WorkerDict'
+pkill -9 -f 'ray::WorkerDict'
+
+
+# 1.7B
+# actor_rollout_ref.actor.ppo_max_token_len_per_gpu=20480 \
