@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-gpu=128G
 #SBATCH --exclude=dgxh-1
-#SBATCH --time=1-00:00:00
+#SBATCH --time=0-12:00:00
 
 unset ROCR_VISIBLE_DEVICES
 unset HIP_VISIBLE_DEVICES
