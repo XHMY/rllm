@@ -14,6 +14,8 @@ unset ROCR_VISIBLE_DEVICES
 unset HIP_VISIBLE_DEVICES
 source ~/.bashrc && conda activate rllm
 
+export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
+
 python -m examples.math_reasoning.evaluate_checkpoints \
     --eval-mode trained_checkpoint \
     --checkpoints-dir checkpoints/rllm-workflow-MARL-v2 \
@@ -22,4 +24,4 @@ python -m examples.math_reasoning.evaluate_checkpoints \
     --base-model checkpoints/init_weight/qwen3_1.7b_s430 \
     --n-rollouts 1 \
     --n-parallel 512 \
-    --port 8000
+    --port 8002
