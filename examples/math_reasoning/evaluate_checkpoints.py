@@ -97,6 +97,7 @@ class CheckpointInfo:
     experiment_name: str  # e.g., "voting-qwen3_0.6b-math"
     workflow_type: str  # "single_agent", "evaluator_optimizer", "voting"
     model_size: str  # "0.6b", "1.7b"
+    model_name: str  # "qwen3_0.6b", "qwen3_1.7b_s430"
     base_model: str  # "Qwen/Qwen3-0.6B"
     checkpoint_step: int  # e.g., 100
     actor_path: str  # Full path to actor directory (contains lora_adapter or lora_adapter_{agent})
@@ -112,6 +113,7 @@ class EvalResult:
     dataset: str
     workflow_type: str
     model_size: str
+    model_name: str
     share_policy: bool
     accuracy: float
     num_correct: int
@@ -136,6 +138,7 @@ class EvalResult:
             "checkpoint_step": self.checkpoint_step,
             "workflow_type": self.workflow_type,
             "model_size": self.model_size,
+            "model_name": self.model_name,
             "share_policy": self.share_policy,
             "accuracy": round(self.accuracy, 4),
             "num_correct": self.num_correct,
@@ -220,12 +223,17 @@ def parse_experiment_name(experiment_name: str) -> dict | None:
     if base_model is None:
         return None
 
+    # Extract full model name (e.g., "qwen3_1.7b_s430" or "qwen3_1.7b")
+    model_name_match = re.search(r"qwen3_\d+\.?\d*b[^-]*", experiment_name, re.IGNORECASE)
+    model_name = model_name_match.group(0).lower() if model_name_match else f"qwen3_{model_size}"
+
     # Determine if share_policy mode from experiment name (hint only, auto-detected later)
     share_policy = "share_policy" in experiment_name
 
     return {
         "workflow_type": workflow_type,
         "model_size": model_size,
+        "model_name": model_name,
         "base_model": base_model,
         "share_policy": share_policy,
     }
@@ -305,6 +313,7 @@ def discover_checkpoints(
                     experiment_name=experiment_name,
                     workflow_type=parsed["workflow_type"],
                     model_size=parsed["model_size"],
+                    model_name=parsed["model_name"],
                     base_model=parsed["base_model"],
                     checkpoint_step=checkpoint_step,
                     actor_path=str(actor_path),
@@ -374,6 +383,7 @@ def create_synthetic_checkpoints(eval_config: EvalConfig) -> list[CheckpointInfo
         raise ValueError("workflow_types is required for base_model and single_agent_transfer modes")
 
     model_size = extract_model_size(eval_config.base_model)
+    model_name = f"qwen3_{model_size}"
     checkpoints = []
 
     for workflow_type in eval_config.workflow_types:
@@ -396,6 +406,7 @@ def create_synthetic_checkpoints(eval_config: EvalConfig) -> list[CheckpointInfo
                 experiment_name=experiment_name,
                 workflow_type=workflow_type,
                 model_size=model_size,
+                model_name=model_name,
                 base_model=eval_config.base_model,
                 checkpoint_step=0,  # Synthetic checkpoints have step 0
                 actor_path=actor_path,
@@ -850,6 +861,7 @@ async def evaluate_checkpoint(
         dataset=dataset_name,
         workflow_type=checkpoint.workflow_type,
         model_size=checkpoint.model_size,
+        model_name=checkpoint.model_name,
         share_policy=checkpoint.share_policy,
         accuracy=mean_accuracy,
         num_correct=num_correct,
@@ -966,6 +978,11 @@ def main(args):
         if args.last_checkpoint_only and checkpoints:
             print(f"Filtering to keep only last checkpoint per experiment...")
             checkpoints = filter_last_checkpoints(checkpoints)
+
+        if args.base_model:
+            print(f"Overriding base model to: {args.base_model}")
+            for cp in checkpoints:
+                cp.base_model = args.base_model
     else:
         # Create synthetic checkpoints for base_model or single_agent_transfer modes
         eval_config = EvalConfig(
@@ -1073,13 +1090,13 @@ def main(args):
                             trajectory_output_dir=args.trajectory_output_dir,
                             dataset_name=args.dataset,
                             n_rollouts=args.n_rollouts,
-                            share_context_with_workers=not args.not_share_context_with_workers,
+                            share_context_with_workers=args.share_context_with_workers,
                         )
                     )
                     all_results.append(result)
 
-                    # Save intermediate results
-                    save_results_to_json(all_results, args.output_json)
+                    # Save intermediate results (only the new result, not the full list)
+                    save_results_to_json([result], args.output_json)
 
                 except Exception as e:
                     print(f"Error evaluating {checkpoint.experiment_name}: {e}")
@@ -1167,7 +1184,8 @@ def parse_args():
         "--base-model",
         type=str,
         default=None,
-        help="Base model path (required for base_model and single_agent_transfer modes)",
+        help="Base model path. Required for base_model/single_agent_transfer modes. "
+             "Optional override for trained_checkpoint mode (default: auto-detected from experiment name).",
     )
     parser.add_argument(
         "--workflow-types",
@@ -1288,6 +1306,7 @@ def parse_args():
         "--not_share_context_with_workers",
         action="store_false",
         dest="share_context_with_workers",
+        default=True,
         help="Whether to share context with workers in orchestrator-workers workflow (default: True)",
     )
 
