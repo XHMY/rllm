@@ -936,6 +936,47 @@ def save_results_to_json(results: list[EvalResult], output_path: str):
     print(f"\nResults appended to: {output_path}")
 
 
+def load_existing_results(output_path: str) -> set[tuple]:
+    """Load already-evaluated checkpoint keys from a JSONL file.
+
+    Returns a set of (experiment_name, checkpoint_step, dataset, eval_mode, n_rollouts) tuples.
+    """
+    existing = set()
+    if not os.path.exists(output_path):
+        return existing
+
+    with open(output_path, "r") as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                key = (
+                    obj.get("experiment_name", ""),
+                    obj.get("checkpoint_step", 0),
+                    obj.get("dataset", ""),
+                    obj.get("eval_mode", ""),
+                    obj.get("n_rollouts", 1),
+                )
+                existing.add(key)
+            except json.JSONDecodeError:
+                print(f"Warning: malformed JSON on line {line_num} of {output_path}, skipping")
+
+    return existing
+
+
+def get_checkpoint_key(checkpoint: CheckpointInfo, dataset: str, eval_mode: str, n_rollouts: int) -> tuple:
+    """Build a dedup key for a checkpoint about to be evaluated."""
+    return (
+        checkpoint.experiment_name,
+        checkpoint.checkpoint_step,
+        dataset,
+        eval_mode,
+        n_rollouts,
+    )
+
+
 # ============================================================================
 # Main Evaluation Loop
 # ============================================================================
@@ -1000,6 +1041,24 @@ def main(args):
     print(f"Found {len(checkpoints)} checkpoints")
     for cp in checkpoints:
         print(f"  - {cp.experiment_name} step {cp.checkpoint_step}")
+
+    # Filter out already-evaluated checkpoints
+    existing_keys = load_existing_results(args.output_json)
+    if existing_keys:
+        original_count = len(checkpoints)
+        filtered = []
+        for cp in checkpoints:
+            key = get_checkpoint_key(cp, args.dataset, eval_mode.value, args.n_rollouts)
+            if key in existing_keys:
+                print(f"  Skipping (already evaluated): {cp.experiment_name} step {cp.checkpoint_step}")
+            else:
+                filtered.append(cp)
+        checkpoints = filtered
+        print(f"Filtered: {original_count} -> {len(checkpoints)} checkpoints ({original_count - len(checkpoints)} already evaluated)")
+
+        if not checkpoints:
+            print("All checkpoints already evaluated. Nothing to do.")
+            return
 
     # Load dataset
     print(f"\nLoading dataset: {args.dataset}")
