@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eval Results Visualization</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        h1 {
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            align-items: center;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .filter-group label {
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        .filter-group select {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            min-width: 150px;
+        }
+        .chart-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            height: 600px;
+        }
+        .group-by-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Training Performance (Mean Accuracy)</h1>
+        
+        <div class="controls">
+            <div class="filter-group">
+                <label for="datasetFilter">Dataset:</label>
+                <select id="datasetFilter"><option value="all">All</option></select>
+            </div>
+            
+            <div class="filter-group">
+                <label for="workflowFilter">Workflow Type:</label>
+                <select id="workflowFilter"><option value="all">All</option></select>
+            </div>
+            
+            <div class="filter-group">
+                <label for="modelNameFilter">Model Name:</label>
+                <select id="modelNameFilter"><option value="all">All</option></select>
+            </div>
+
+            <div class="filter-group">
+                <label for="sharePolicyFilter">Share Policy:</label>
+                <select id="sharePolicyFilter"><option value="all">All</option></select>
+            </div>
+
+            <div class="group-by-group filter-group">
+                <label for="groupBy">Group By (Lines):</label>
+                <select id="groupBy">
+                    <option value="experiment_name">Experiment Name</option>
+                    <option value="workflow_type">Workflow Type</option>
+                    <option value="model_name">Model Name</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <canvas id="accuracyChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let chartInstance = null;
+        let allData = [];
+
+        // Predefined color palette for lines
+        const colors = [
+            '#4e79a7', '#f28e2c', '#e15759', '#76b7b2', '#59a14f', 
+            '#edc949', '#af7aa1', '#ff9da7', '#9c755f', '#bab0ab'
+        ];
+
+        async function loadData() {
+            try {
+                // Fetch the JSONL file
+                const response = await fetch('eval_results.jsonl');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const text = await response.text();
+                
+                // Parse JSONL
+                const lines = text.trim().split('\n');
+                allData = lines.map(line => {
+                    try {
+                        return JSON.parse(line);
+                    } catch (e) {
+                        return null;
+                    }
+                }).filter(item => item !== null && item.checkpoint_step !== undefined && item.mean_accuracy !== undefined);
+
+                // Initialize UI
+                populateFilters();
+                updateChart();
+
+                // Add event listeners
+                document.getElementById('datasetFilter').addEventListener('change', updateChart);
+                document.getElementById('workflowFilter').addEventListener('change', updateChart);
+                document.getElementById('modelNameFilter').addEventListener('change', updateChart);
+                document.getElementById('sharePolicyFilter').addEventListener('change', updateChart);
+                document.getElementById('groupBy').addEventListener('change', updateChart);
+
+            } catch (error) {
+                console.error("Error loading data:", error);
+                alert("Failed to load eval_results.jsonl. Make sure the file exists in the same directory and you are running via a web server (e.g., python -m http.server)");
+            }
+        }
+
+        function populateFilters() {
+            const datasets = new Set();
+            const workflows = new Set();
+            const models = new Set();
+            const policies = new Set();
+
+            allData.forEach(item => {
+                if (item.dataset) datasets.add(item.dataset);
+                if (item.workflow_type) workflows.add(item.workflow_type);
+                if (item.model_name) models.add(item.model_name);
+                if (item.share_policy !== undefined) policies.add(item.share_policy.toString());
+            });
+
+            const fillSelect = (id, set) => {
+                const select = document.getElementById(id);
+                // Keep the "All" option
+                Array.from(set).sort().forEach(val => {
+                    const option = document.createElement('option');
+                    option.value = val;
+                    option.textContent = val;
+                    select.appendChild(option);
+                });
+            };
+
+            fillSelect('datasetFilter', datasets);
+            fillSelect('workflowFilter', workflows);
+            fillSelect('modelNameFilter', models);
+            fillSelect('sharePolicyFilter', policies);
+        }
+
+        function updateChart() {
+            const datasetFilter = document.getElementById('datasetFilter').value;
+            const workflowFilter = document.getElementById('workflowFilter').value;
+            const modelNameFilter = document.getElementById('modelNameFilter').value;
+            const sharePolicyFilter = document.getElementById('sharePolicyFilter').value;
+            const groupBy = document.getElementById('groupBy').value;
+
+            // Apply filters
+            const filteredData = allData.filter(item => {
+                let match = true;
+                if (datasetFilter !== 'all' && item.dataset !== datasetFilter) match = false;
+                if (workflowFilter !== 'all' && item.workflow_type !== workflowFilter) match = false;
+                if (modelNameFilter !== 'all' && item.model_name !== modelNameFilter) match = false;
+                if (sharePolicyFilter !== 'all' && item.share_policy?.toString() !== sharePolicyFilter) match = false;
+                return match;
+            });
+
+            // Group data by selected key
+            const grouped = {};
+            filteredData.forEach(item => {
+                const groupKey = item[groupBy] || 'Unknown';
+                if (!grouped[groupKey]) {
+                    grouped[groupKey] = [];
+                }
+                grouped[groupKey].push(item);
+            });
+
+            // Sort each group by checkpoint_step
+            Object.keys(grouped).forEach(key => {
+                grouped[key].sort((a, b) => a.checkpoint_step - b.checkpoint_step);
+            });
+
+            // Prepare datasets for Chart.js
+            const datasets = Object.keys(grouped).map((groupKey, index) => {
+                const dataPoints = grouped[groupKey].map(item => ({
+                    x: item.checkpoint_step,
+                    y: item.mean_accuracy,
+                    ...item // Keep all data for tooltip
+                }));
+
+                return {
+                    label: groupKey,
+                    data: dataPoints,
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: colors[index % colors.length] + '40', // with transparency
+                    borderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    fill: false,
+                    tension: 0.1 // Slight curve
+                };
+            });
+
+            renderChart(datasets);
+        }
+
+        function renderChart(datasets) {
+            const ctx = document.getElementById('accuracyChart').getContext('2d');
+            
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Mean Accuracy vs Checkpoint Step'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const point = context.raw;
+                                    let lines = [
+                                        `Group: ${context.dataset.label}`,
+                                        `Step: ${point.checkpoint_step}`,
+                                        `Mean Accuracy: ${point.y.toFixed(4)}`,
+                                    ];
+                                    if (point.experiment_name) lines.push(`Experiment: ${point.experiment_name}`);
+                                    if (point.accuracy !== undefined) lines.push(`Raw Accuracy: ${point.accuracy.toFixed(4)}`);
+                                    return lines;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Checkpoint Step',
+                                font: {
+                                    weight: 'bold',
+                                    size: 14
+                                }
+                            },
+                            ticks: {
+                                precision: 0
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Mean Accuracy',
+                                font: {
+                                    weight: 'bold',
+                                    size: 14
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', loadData);
+    </script>
+</body>
+</html>
