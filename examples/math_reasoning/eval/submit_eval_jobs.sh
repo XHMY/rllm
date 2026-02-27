@@ -41,8 +41,8 @@ N_ROLLOUTS=1
 N_PARALLEL=512
 PARTITION="dgxh"
 CONSTRAINT=""
-MEM_PER_GPU="64G"
-TIME_LIMIT="0-6:00:00"
+MEM_PER_GPU="80G"
+TIME_LIMIT="0-12:00:00"
 DRY_RUN=false
 
 # --- Parse arguments ---
@@ -132,6 +132,7 @@ HEADER
     echo "#SBATCH --nodes=1"
     echo "#SBATCH --gres=gpu:1"
     echo "#SBATCH --cpus-per-gpu=4"
+    echo "#SBATCH --exclude=dgxh-1"
     echo "#SBATCH --mem-per-gpu=${MEM_PER_GPU}"
     echo "#SBATCH --constraint=${CONSTRAINT}"
     echo "#SBATCH --time=${TIME_LIMIT}"
