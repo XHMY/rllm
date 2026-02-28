@@ -5,7 +5,7 @@
 #SBATCH --partition=dgxh
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:2
-#SBATCH --cpus-per-gpu=8
+#SBATCH --cpus-per-gpu=4
 #SBATCH --mem-per-gpu=128G
 #SBATCH --exclude=dgxh-1
 #SBATCH --time=1-00:00:00

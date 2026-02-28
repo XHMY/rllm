@@ -2,13 +2,13 @@
 #SBATCH --job-name=verl-ray
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
-#SBATCH --partition=preempt
+#SBATCH --partition=dgxh
+#SBATCH --exclude=dgxh-1
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-gpu=4
-#SBATCH --mem-per-gpu=48G
-#SBATCH --constraint=l40s
-#SBATCH --time=3-00:00:00
+#SBATCH --mem-per-gpu=128G
+#SBATCH --time=0-12:00:00
 
 unset ROCR_VISIBLE_DEVICES
 unset HIP_VISIBLE_DEVICES
@@ -36,6 +36,8 @@ python3 -m examples.math_reasoning.train_orchestrator_workers_math \
     +rllm.workflow.max_subtasks=3 \
     rllm.workflow.use_final_outcome_reward=true \
     +rllm.workflow.share_context_with_workers=false \
-    trainer.share_policy=True
+    trainer.share_policy=True \
+    trainer.total_training_steps=301
     
 # pkill -9 -f 'ray::WorkerDict'
+# actor_rollout_ref.actor.ppo_max_token_len_per_gpu=23554 \
