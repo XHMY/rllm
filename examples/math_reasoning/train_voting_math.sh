@@ -27,9 +27,9 @@ export VERL_LOGGING_LEVEL=INFO
 python3 -m examples.math_reasoning.train_voting_math \
     data.max_prompt_length=30720 \
     data.max_response_length=5120 \
-    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_1.7b_s430 \
+    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_0.6b_s290 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    trainer.experiment_name='voting-qwen3_1.7b_s430-math' \
+    trainer.experiment_name='voting-qwen3_0.6b_s290-math' \
     trainer.n_gpus_per_node=2 \
     rllm.workflow.use_final_outcome_reward=true \
     trainer.agent_names=['generator','aggregator'] \

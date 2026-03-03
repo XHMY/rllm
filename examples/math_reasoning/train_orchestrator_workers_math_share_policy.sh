@@ -26,9 +26,9 @@ export VERL_LOGGING_LEVEL=INFO
 python3 -m examples.math_reasoning.train_orchestrator_workers_math \
     data.max_prompt_length=20480 \
     data.max_response_length=3072 \
-    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_1.7b_s430 \
+    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_0.6b_s290 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    trainer.experiment_name='orchestrator_workers-qwen3_1.7b_s430-share_policy-math' \
+    trainer.experiment_name='orchestrator_workers-qwen3_0.6b_s290-share_policy-math' \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=23554 \
     trainer.n_gpus_per_node=4 \
     trainer.agent_names=['orchestrator','worker'] \
