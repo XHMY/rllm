@@ -148,7 +148,7 @@ trainer:
   test_freq: 10
   save_freq: 10
   # total_epochs: 2
-  total_training_steps: 300
+  total_training_steps: 301
 
 ray_init:
   include_dashboard: True

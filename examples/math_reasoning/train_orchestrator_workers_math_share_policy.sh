@@ -2,13 +2,14 @@
 #SBATCH --job-name=verl-ray
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
-#SBATCH --partition=dgxh
-#SBATCH --exclude=dgxh-1
+#SBATCH --partition=preempt
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-gpu=4
-#SBATCH --mem-per-gpu=128G
-#SBATCH --time=0-12:00:00
+#SBATCH --mem-per-gpu=48G
+#SBATCH --constraint=l40s
+#SBATCH --time=7-00:00:00
+#SBATCH --requeue
 
 unset ROCR_VISIBLE_DEVICES
 unset HIP_VISIBLE_DEVICES
@@ -26,18 +27,17 @@ export VERL_LOGGING_LEVEL=INFO
 python3 -m examples.math_reasoning.train_orchestrator_workers_math \
     data.max_prompt_length=20480 \
     data.max_response_length=3072 \
-    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_0.6b_s290 \
+    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_1.7b_s430 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    trainer.experiment_name='orchestrator_workers-qwen3_0.6b_s290-share_policy-math' \
+    trainer.experiment_name='orchestrator_workers_v2-qwen3_1.7b_s430-share_policy-math' \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=23554 \
     trainer.n_gpus_per_node=4 \
-    trainer.agent_names=['orchestrator','worker'] \
+    trainer.agent_names=['orchestrator','worker','synthesizer'] \
     trainer.log_episodes=false \
     +rllm.workflow.max_subtasks=3 \
     rllm.workflow.use_final_outcome_reward=true \
-    +rllm.workflow.share_context_with_workers=false \
-    trainer.share_policy=True \
-    trainer.total_training_steps=301
+    +rllm.workflow.share_main_task_with_workers=false \
+    trainer.share_policy=True
     
 # pkill -9 -f 'ray::WorkerDict'
 # actor_rollout_ref.actor.ppo_max_token_len_per_gpu=23554 \

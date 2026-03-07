@@ -1,10 +1,10 @@
 """Orchestrator-Workers Workflow.
 
 This module provides an abstract base class for implementing orchestrator-workers
-workflows. The pattern involves:
+workflows. The pattern involves three agents:
 1. Orchestrator (Decomposition): Analyzes complex task, breaks into subtasks
 2. Workers (Execution): Execute subtasks in parallel or sequential
-3. Orchestrator (Synthesis): Synthesizes worker outputs into final response
+3. Synthesizer (Synthesis): Synthesizes worker outputs into final response
 """
 
 import asyncio
@@ -57,14 +57,15 @@ class DecompositionResult:
 class OrchestratorWorkersWorkflow(Workflow):
     """Abstract base class for orchestrator-workers workflows.
 
-    This workflow pattern uses two agents:
-    - Orchestrator: Decomposes complex tasks and synthesizes results
+    This workflow pattern uses three agents:
+    - Orchestrator: Decomposes complex tasks into subtasks
     - Worker: Executes individual subtasks
+    - Synthesizer: Synthesizes worker outputs into final response
 
     The workflow:
     1. Orchestrator analyzes the task and breaks it into subtasks
     2. Workers execute subtasks (in parallel or sequential)
-    3. Orchestrator synthesizes worker outputs into final response
+    3. Synthesizer synthesizes worker outputs into final response
 
     Subclasses must implement:
     - build_decomposition_prompt(): Create prompt for task decomposition
@@ -92,6 +93,7 @@ class OrchestratorWorkersWorkflow(Workflow):
     # Agent names (no underscores per CLAUDE.md conventions)
     ORCHESTRATOR_NAME = "orchestrator"
     WORKER_NAME = "worker"
+    SYNTHESIZER_NAME = "synthesizer"
 
     def __init__(
         self,
@@ -99,7 +101,7 @@ class OrchestratorWorkersWorkflow(Workflow):
         max_subtasks: int = 5,
         default_execution_mode: str = "parallel",
         use_final_outcome_reward: bool = True,
-        share_context_with_workers: bool = True,
+        share_main_task_with_workers: bool = True,
         **kwargs,
     ):
         """Initialize the OrchestratorWorkersWorkflow.
@@ -110,14 +112,14 @@ class OrchestratorWorkersWorkflow(Workflow):
             default_execution_mode: Default execution mode ("parallel" or "sequential")
             use_final_outcome_reward: If True, assign the final outcome reward to
                 ALL trajectories in the episode
-            share_context_with_workers: Whether to share original task context with workers
+            share_main_task_with_workers: Whether to share original task context with workers
             **kwargs: Additional arguments passed to parent Workflow
         """
         super().__init__(rollout_engine, **kwargs)
         self.max_subtasks = max_subtasks
         self.default_execution_mode = default_execution_mode
         self.use_final_outcome_reward = use_final_outcome_reward
-        self.share_context_with_workers = share_context_with_workers
+        self.share_main_task_with_workers = share_main_task_with_workers
 
     # ===== Abstract methods that subclasses MUST implement =====
 
@@ -513,14 +515,14 @@ class OrchestratorWorkersWorkflow(Workflow):
 
         synth_output = await self.rollout_engine.get_model_response(
             synth_messages,
-            agent_name=self.ORCHESTRATOR_NAME,
+            agent_name=self.SYNTHESIZER_NAME,
         )
 
         final_response = self.extract_response(synth_output)
         final_reward = self.compute_final_reward(task, final_response)
 
         synth_trajectory = Trajectory(
-            name=self.ORCHESTRATOR_NAME,
+            name=self.SYNTHESIZER_NAME,
             steps=[
                 Step(
                     chat_completions=synth_messages + [{
@@ -590,8 +592,9 @@ class OrchestratorWorkersWorkflow(Workflow):
         n_workers = len(worker_results)
         successful_workers = sum(1 for r in worker_results if r.success)
 
-        # Count orchestrator calls (decomposition + synthesis = 2)
-        orchestrator_calls = 2
+        # Count agent calls (orchestrator=1 decomposition, synthesizer=1 synthesis)
+        orchestrator_calls = 1
+        synthesizer_calls = 1
         worker_calls = n_workers
 
         return {
@@ -601,6 +604,7 @@ class OrchestratorWorkersWorkflow(Workflow):
             "worker_success_rate": successful_workers / n_workers if n_workers > 0 else 0.0,
             f"{self.ORCHESTRATOR_NAME}_calls": orchestrator_calls,
             f"{self.WORKER_NAME}_calls": worker_calls,
+            f"{self.SYNTHESIZER_NAME}_calls": synthesizer_calls,
             "success": int(final_correct),
             "total_trajectories": len(trajectories),
         }
