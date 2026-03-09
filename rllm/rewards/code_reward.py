@@ -4,17 +4,10 @@ and assigns rewards based on their correctness on unit tests.
 """
 
 import ast
-import builtins
-import faulthandler
 import json
-import logging
 import multiprocessing
-import os
 import re
 import resource
-import shutil
-import subprocess
-import sys
 from typing import Any
 
 from rllm.rewards.code_utils.firejail_exec import code_exec_firejail as lc_code_exec
@@ -37,60 +30,6 @@ _USE_DIRECT_EXECUTION = False
 def set_direct_execution(enabled: bool):
     global _USE_DIRECT_EXECUTION
     _USE_DIRECT_EXECUTION = enabled
-
-
-_SENTINEL = object()
-
-# Attributes that reliability_guard() sets to None
-_OS_ATTRS = [
-    "kill", "system", "putenv", "remove", "removedirs", "rmdir", "fchdir",
-    "setuid", "fork", "forkpty", "killpg", "rename", "renames", "truncate",
-    "replace", "unlink", "fchmod", "fchown", "chmod", "chown", "chroot",
-    "lchflags", "lchmod", "lchown", "getcwd", "chdir",
-]
-_SHUTIL_ATTRS = ["rmtree", "move", "chown"]
-_SYSMODULE_KEYS = ["ipdb", "joblib", "resource", "psutil", "tkinter"]
-
-
-def _save_reliability_guard_state():
-    """Save all attributes that reliability_guard() modifies."""
-    saved = {}
-    saved["os"] = {attr: getattr(os, attr, _SENTINEL) for attr in _OS_ATTRS}
-    saved["shutil"] = {attr: getattr(shutil, attr, _SENTINEL) for attr in _SHUTIL_ATTRS}
-    saved["subprocess_Popen"] = subprocess.Popen
-    saved["builtins_quit"] = getattr(builtins, "quit", _SENTINEL)
-    saved["builtins_help"] = __builtins__["help"] if isinstance(__builtins__, dict) else getattr(__builtins__, "help", _SENTINEL)
-    saved["sys_modules"] = {k: sys.modules.get(k, _SENTINEL) for k in _SYSMODULE_KEYS}
-    saved["faulthandler_enabled"] = faulthandler.is_enabled()
-    saved["recursion_limit"] = sys.getrecursionlimit()
-    return saved
-
-
-def _restore_reliability_guard_state(saved):
-    """Restore all attributes that reliability_guard() modifies."""
-    for attr, val in saved["os"].items():
-        if val is not _SENTINEL:
-            setattr(os, attr, val)
-    for attr, val in saved["shutil"].items():
-        if val is not _SENTINEL:
-            setattr(shutil, attr, val)
-    subprocess.Popen = saved["subprocess_Popen"]
-    if saved["builtins_quit"] is not _SENTINEL:
-        builtins.quit = saved["builtins_quit"]
-    if isinstance(__builtins__, dict):
-        if saved["builtins_help"] is not _SENTINEL:
-            __builtins__["help"] = saved["builtins_help"]
-    else:
-        if saved["builtins_help"] is not _SENTINEL:
-            __builtins__.help = saved["builtins_help"]
-    for k, val in saved["sys_modules"].items():
-        if val is _SENTINEL:
-            sys.modules.pop(k, None)
-        else:
-            sys.modules[k] = val
-    if saved["faulthandler_enabled"]:
-        faulthandler.enable()
-    sys.setrecursionlimit(saved["recursion_limit"])
 
 
 def extract_code_from_model(model_response: str):
