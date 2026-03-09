@@ -31,6 +31,13 @@ import json
 import shutil
 from pathlib import Path
 
+from scripts.verify_merge import (
+    load_adapter_weights,
+    load_merged_weights,
+    verify_weights,
+)
+
+
 import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -75,14 +82,21 @@ def main():
     parser.add_argument(
         "--safe_serialization",
         action="store_true",
-        default=False,
-        help="Save in safetensors format (default: False, saves in PyTorch bin format)",
+        default=True,
+        dest="safe_serialization",
+        help="Save in safetensors format (default)",
     )
     parser.add_argument(
         "--no_safe_serialization",
+        action="store_false",
+        dest="safe_serialization",
+        help="Save in PyTorch bin format instead of safetensors",
+    )
+    parser.add_argument(
+        "--verify",
         action="store_true",
-        default=True,
-        help="Save in pytorch bin format instead of safetensors",
+        default=False,
+        help="Run weight verification after merge to confirm correctness",
     )
 
     args = parser.parse_args()
@@ -114,9 +128,11 @@ def main():
         "fp32": torch.float32,
     }
     torch_dtype = dtype_map[args.dtype]
-    safe_serialization = args.safe_serialization and not args.no_safe_serialization
+    safe_serialization = args.safe_serialization
 
-    # Step 1: Load base model
+    # Step 1: Load base model using target dtype.
+    # PEFT handles CPU bf16/fp16 LoRA delta matmul in fp32 internally, then
+    # casts back, so this path is both memory efficient and numerically stable.
     print(f"Loading base model: {args.base_model} (dtype={args.dtype})")
     base_model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
@@ -131,6 +147,7 @@ def main():
         base_model,
         str(adapter_path),
         torch_dtype=torch_dtype,
+        torch_device="cpu",
     )
 
     # Step 3: Merge and unload
@@ -157,10 +174,35 @@ def main():
     # Print summary
     print("\nDone!")
     print(f"  Merged model saved to: {output_dir}")
+    print(f"  Format: {'safetensors' if safe_serialization else 'pytorch_model.bin'}")
     print(f"  Files:")
     for f in sorted(output_dir.iterdir()):
         size_mb = f.stat().st_size / (1024 * 1024)
         print(f"    {f.name} ({size_mb:.1f} MB)")
+
+    # Optional verification
+    if args.verify:
+
+        print("\n--- Running post-merge verification ---")
+        print("Loading base model weights for comparison...")
+        base_for_verify = AutoModelForCausalLM.from_pretrained(
+            args.base_model, torch_dtype=torch_dtype, device_map="cpu", trust_remote_code=True
+        )
+        base_weights = dict(base_for_verify.state_dict())
+        del base_for_verify
+
+        adapter_w = load_adapter_weights(adapter_path)
+        merged_w = load_merged_weights(output_dir)
+
+        weight_passed, weight_msgs = verify_weights(base_weights, adapter_w, merged_w, adapter_config)
+        for msg in weight_msgs:
+            print(msg)
+
+        if weight_passed:
+            print("\nVerification PASSED: Merge is correct.")
+        else:
+            print("\nVerification FAILED: See above for details.")
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

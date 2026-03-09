@@ -27,7 +27,7 @@ class OrchestratorWorkersMathWorkflow(OrchestratorWorkersWorkflow):
 
     1. Orchestrator: Decomposes complex math problem into 2-4 subproblems
     2. Workers: Solve each subproblem in parallel, outputting in \\boxed{} format
-    3. Orchestrator: Synthesizes solutions into final answer in \\boxed{} format
+    3. Synthesizer: Synthesizes solutions into final answer in \\boxed{} format
 
     Example:
         workflow = OrchestratorWorkersMathWorkflow(
@@ -46,7 +46,7 @@ class OrchestratorWorkersMathWorkflow(OrchestratorWorkersWorkflow):
         prompt_file: str = "examples/math_reasoning/prompt.json",
         max_subtasks: int = 4,
         use_final_outcome_reward: bool = True,
-        share_context_with_workers: bool = True,
+        share_main_task_with_workers: bool = True,
         **kwargs,
     ):
         """Initialize the math orchestrator-workers workflow.
@@ -65,7 +65,7 @@ class OrchestratorWorkersMathWorkflow(OrchestratorWorkersWorkflow):
             max_subtasks=max_subtasks,
             default_execution_mode="parallel",
             use_final_outcome_reward=use_final_outcome_reward,
-            share_context_with_workers=share_context_with_workers,
+            share_main_task_with_workers=share_main_task_with_workers,
             **kwargs,
         )
         self.reward_function = reward_function
@@ -143,13 +143,6 @@ class OrchestratorWorkersMathWorkflow(OrchestratorWorkersWorkflow):
         """
         problem = task["question"]
 
-        # Build context from previous results if in sequential mode
-        context = ""
-        if previous_results:
-            context = "\n\nPrevious subproblem solutions:\n"
-            for prev in previous_results:
-                context += f"- Subproblem {prev.subtask_id + 1}: {prev.response}\n"
-
         template = self.prompts.get("worker_solve", {}).get(
             "template",
             "You are a math problem solver working on a specific part of a larger "
@@ -163,10 +156,10 @@ class OrchestratorWorkersMathWorkflow(OrchestratorWorkersWorkflow):
             "Solve the subproblem:",
         )
 
-        # Include original problem in context
-        full_context = f"Original problem: {problem}"
-        if context:
-            full_context += context
+        if self.share_main_task_with_workers:
+            full_context = f"Original problem: {problem}"
+        else:
+            full_context = ""  # Workers only see the subtask, not the original problem
 
         return template.format(context=full_context, subtask=subtask)
 

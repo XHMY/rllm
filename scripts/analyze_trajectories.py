@@ -59,7 +59,7 @@ def detect_workflow_type(all_data):
         for t in d.get("trajectories", []):
             agent_names.add(t["name"])
 
-    if "orchestrator" in agent_names and "worker" in agent_names:
+    if "orchestrator" in agent_names and "worker" in agent_names and "synthesizer" in agent_names:
         return "orchestrator-workers"
     if "aggregator" in agent_names:
         return "voting"
@@ -495,6 +495,7 @@ def analyze_orchestrator_workers(all_data):
         m = d["metrics"]
         orch_trajs = [t for t in d["trajectories"] if t["name"] == "orchestrator"]
         worker_trajs = [t for t in d["trajectories"] if t["name"] == "worker"]
+        synth_trajs = [t for t in d["trajectories"] if t["name"] == "synthesizer"]
 
         # Extract decomposition info from first orchestrator call
         subtasks = []
@@ -514,6 +515,7 @@ def analyze_orchestrator_workers(all_data):
             "successful_workers": m.get("successful_workers", sum(1 for r in worker_rewards if r == 1.0)),
             "worker_success_rate": m.get("worker_success_rate", 0),
             "orchestrator_calls": m.get("orchestrator_calls", len(orch_trajs)),
+            "synthesizer_calls": m.get("synthesizer_calls", len(synth_trajs)),
             "worker_rewards": worker_rewards,
             "subtasks": subtasks,
         })

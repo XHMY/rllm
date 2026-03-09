@@ -118,6 +118,7 @@ class TinkerWorkflowTrainer(TinkerAgentTrainer):
             config=self.config,
             n_parallel_tasks=self.config.workflow.n_parallel_tasks,
             retry_limit=self.config.workflow.retry_limit,
+            code_executor_workers=getattr(self.config.workflow, "code_executor_workers", 0),
         )
         self.n_parallel_tasks = self.config.workflow.n_parallel_tasks
         # Track number of batches for progress calculation

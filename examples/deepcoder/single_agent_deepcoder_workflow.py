@@ -196,7 +196,7 @@ class SingleAgentDeepcodeWorkflow(CodeTestLoopMixin, Workflow):
         code = output.content or output.text or ""
 
         # Compute reward from test execution (run in thread pool for parallelism)
-        reward_output = await self.run_in_executor(code_reward_fn, task, code)
+        reward_output = await self.run_in_code_executor(code_reward_fn, task, code)
         reward = reward_output.reward
         is_correct = reward_output.is_correct
 

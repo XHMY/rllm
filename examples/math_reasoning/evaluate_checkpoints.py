@@ -184,7 +184,7 @@ AGENT_NAMES_MAP = {
     "single_agent": ["generator"],
     "evaluator_optimizer": ["generator", "evaluator"],
     "voting": ["generator", "aggregator"],
-    "orchestrator_workers": ["orchestrator", "worker"],
+    "orchestrator_workers": ["orchestrator", "worker", "synthesizer"],
 }
 
 
@@ -705,7 +705,7 @@ async def evaluate_checkpoint(
     trajectory_output_dir: str = None,
     dataset_name: str = None,
     n_rollouts: int = 1,
-    share_context_with_workers: bool = True,
+    share_main_task_with_workers: bool = True,
 ) -> EvalResult:
     """Evaluate a single checkpoint on the dataset.
 
@@ -720,7 +720,7 @@ async def evaluate_checkpoint(
         trajectory_output_dir: Directory to save detailed trajectory JSON files.
         dataset_name: Name of the dataset being evaluated.
         n_rollouts: Number of independent rollouts per sample.
-        share_context_with_workers: Whether to share context with workers in orchestrator-workers workflow.
+        share_main_task_with_workers: Whether to share context with workers in orchestrator-workers workflow.
     Returns:
         EvalResult with accuracy and metrics.
     """
@@ -756,7 +756,7 @@ async def evaluate_checkpoint(
         workflow_kwargs["max_iterations"] = 3
     if checkpoint.workflow_type == "orchestrator_workers":
         workflow_kwargs["max_subtasks"] = 3
-        workflow_kwargs["share_context_with_workers"] = share_context_with_workers
+        workflow_kwargs["share_main_task_with_workers"] = share_main_task_with_workers
 
     # Run parallel evaluation with semaphore
     total_tasks = len(dataset) * n_rollouts
@@ -1161,7 +1161,7 @@ def main(args):
                             trajectory_output_dir=args.trajectory_output_dir,
                             dataset_name=args.dataset,
                             n_rollouts=args.n_rollouts,
-                            share_context_with_workers=args.share_context_with_workers,
+                            share_main_task_with_workers=args.share_main_task_with_workers,
                         )
                     )
                     all_results.append(result)
@@ -1379,11 +1379,10 @@ def parse_args():
         help="Number of independent rollouts per sample for computing mean/std accuracy and Pass@N",
     )
     parser.add_argument(
-        "--not_share_context_with_workers",
-        action="store_false",
-        dest="share_context_with_workers",
-        default=True,
-        help="Whether to share context with workers in orchestrator-workers workflow (default: True)",
+        "--share-main-task-with-workers",
+        action="store_true",
+        default=False,
+        help="Share original problem context with workers in orchestrator-workers workflow (default: off)",
     )
     parser.add_argument(
         "--max-samples",

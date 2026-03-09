@@ -415,7 +415,7 @@ class DeepcodeEvaluatorOptimizerWorkflow(CodeTestLoopMixin, EvaluatorOptimizerWo
             )
 
         # Compute reward from test execution (run in thread pool for parallelism)
-        reward_output = await self.run_in_executor(code_reward_fn, task, current_response)
+        reward_output = await self.run_in_code_executor(code_reward_fn, task, current_response)
         test_passed = reward_output.is_correct
 
         # Assign rewards

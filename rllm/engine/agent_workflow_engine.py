@@ -1,8 +1,9 @@
 import asyncio
 import logging
+import multiprocessing
 import uuid
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -22,8 +23,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _code_executor_init():
+    """Initializer for ProcessPoolExecutor workers used for code reward evaluation."""
+    from rllm.rewards.code_reward import set_direct_execution
+    set_direct_execution(True)
+
+
 class AgentWorkflowEngine:
-    def __init__(self, workflow_cls: type[Workflow], workflow_args: dict, rollout_engine: RolloutEngine, config=None, n_parallel_tasks: int = 128, retry_limit: int = 3, raise_on_error: bool = True, episode_logger=None, **kwargs):
+    def __init__(self, workflow_cls: type[Workflow], workflow_args: dict, rollout_engine: RolloutEngine, config=None, n_parallel_tasks: int = 128, retry_limit: int = 3, raise_on_error: bool = True, episode_logger=None, code_executor_workers: int = 0, **kwargs):
         """Initialize the AgentWorkflowEngine.
 
         Args:
@@ -35,6 +42,7 @@ class AgentWorkflowEngine:
             retry_limit: Maximum number of retry attempts for failed tasks.
             raise_on_error: Whether to raise exceptions on permanent failures.
             episode_logger: Optional logger for saving episode data to files.
+            code_executor_workers: Number of ProcessPoolExecutor workers for code reward evaluation. 0 disables (falls back to ThreadPoolExecutor).
             **kwargs: Additional keyword arguments.
         """
         self.workflow_cls = workflow_cls
@@ -50,6 +58,17 @@ class AgentWorkflowEngine:
         self.n_parallel_tasks = n_parallel_tasks
         self.executor = ThreadPoolExecutor(max_workers=self.n_parallel_tasks)
         self.workflow_queue = None
+
+        # Code reward ProcessPoolExecutor
+        if code_executor_workers > 0:
+            mp_ctx = multiprocessing.get_context("spawn")
+            self.code_reward_executor = ProcessPoolExecutor(
+                max_workers=code_executor_workers,
+                mp_context=mp_ctx,
+                initializer=_code_executor_init,
+            )
+        else:
+            self.code_reward_executor = None
 
         # Episode logging support
         self.episode_logger = episode_logger
@@ -80,7 +99,7 @@ class AgentWorkflowEngine:
             return
         self.workflow_queue = asyncio.Queue(maxsize=self.n_parallel_tasks)
         for i in range(self.n_parallel_tasks):
-            workflow = self.workflow_cls(rollout_engine=self.rollout_engine, executor=self.executor, **self.workflow_args)
+            workflow = self.workflow_cls(rollout_engine=self.rollout_engine, executor=self.executor, code_reward_executor=self.code_reward_executor, **self.workflow_args)
             assert workflow.is_multithread_safe(), "Workflows must contain only thread-save environments"
             self.workflow_queue.put_nowait(workflow)
 
@@ -521,6 +540,9 @@ class AgentWorkflowEngine:
 
     def shutdown(self):
         """Shutdown the workflow engine and cleanup resources."""
+        if hasattr(self, "code_reward_executor") and self.code_reward_executor is not None:
+            self.code_reward_executor.shutdown(wait=True)
+            self.code_reward_executor = None
         if hasattr(self, "executor") and self.executor is not None:
             self.executor.shutdown(wait=True)
             self.executor = None

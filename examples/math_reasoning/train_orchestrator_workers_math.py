@@ -1,11 +1,11 @@
 """Training entry point for the Orchestrator-Workers Math Workflow.
 
-This script trains a 2-agent orchestrator-workers workflow for mathematical
+This script trains a 3-agent orchestrator-workers workflow for mathematical
 problem solving using reinforcement learning with task decomposition.
 
 Usage:
     python -m examples.math_reasoning.train_orchestrator_workers_math \
-        trainer.agent_names=['orchestrator','worker'] \
+        trainer.agent_names=['orchestrator','worker','synthesizer'] \
         +rllm.workflow.max_subtasks=4
 """
 
@@ -40,14 +40,14 @@ def main(config):
     # Get workflow config parameters
     max_subtasks = 4
     use_final_outcome_reward = True
-    share_context_with_workers = True
+    share_main_task_with_workers = True
     if hasattr(config, "rllm") and hasattr(config.rllm, "workflow"):
         max_subtasks = getattr(config.rllm.workflow, "max_subtasks", 4)
         use_final_outcome_reward = getattr(
             config.rllm.workflow, "use_final_outcome_reward", True
         )
-        share_context_with_workers = getattr(
-            config.rllm.workflow, "share_context_with_workers", True
+        share_main_task_with_workers = getattr(
+            config.rllm.workflow, "share_main_task_with_workers", True
         )
 
     # Get initial_lora_weights from config if specified
@@ -70,7 +70,7 @@ def main(config):
             "max_subtasks": max_subtasks,
             "reward_function": math_reward_fn,
             "use_final_outcome_reward": use_final_outcome_reward,
-            "share_context_with_workers": share_context_with_workers,
+            "share_main_task_with_workers": share_main_task_with_workers,
             "initial_lora_weights": initial_lora_weights,
         },
         config=config,
