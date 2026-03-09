@@ -1,3 +1,5 @@
+
+trajectory_outputs/
 evaluation_trajectories/
 .idea/
 checkpoints

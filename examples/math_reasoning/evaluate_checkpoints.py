@@ -992,6 +992,13 @@ def main(args):
     eval_mode = EvalMode(args.eval_mode)
     print(f"\nEvaluation mode: {eval_mode.value}")
 
+    # Validate --max-samples arguments
+    if args.max_samples is not None:
+        if not args.trajectory_output_dir:
+            raise ValueError("--trajectory-output-dir is required when using --max-samples")
+        if args.max_samples <= 0:
+            raise ValueError("--max-samples must be a positive integer")
+
     # Validate arguments based on mode
     if eval_mode == EvalMode.TRAINED_CHECKPOINT:
         if not args.checkpoints_dir:
@@ -1042,23 +1049,24 @@ def main(args):
     for cp in checkpoints:
         print(f"  - {cp.experiment_name} step {cp.checkpoint_step}")
 
-    # Filter out already-evaluated checkpoints
-    existing_keys = load_existing_results(args.output_json)
-    if existing_keys:
-        original_count = len(checkpoints)
-        filtered = []
-        for cp in checkpoints:
-            key = get_checkpoint_key(cp, args.dataset, eval_mode.value, args.n_rollouts)
-            if key in existing_keys:
-                print(f"  Skipping (already evaluated): {cp.experiment_name} step {cp.checkpoint_step}")
-            else:
-                filtered.append(cp)
-        checkpoints = filtered
-        print(f"Filtered: {original_count} -> {len(checkpoints)} checkpoints ({original_count - len(checkpoints)} already evaluated)")
+    # Filter out already-evaluated checkpoints (skip in trajectory-only mode)
+    if args.max_samples is None:
+        existing_keys = load_existing_results(args.output_json)
+        if existing_keys:
+            original_count = len(checkpoints)
+            filtered = []
+            for cp in checkpoints:
+                key = get_checkpoint_key(cp, args.dataset, eval_mode.value, args.n_rollouts)
+                if key in existing_keys:
+                    print(f"  Skipping (already evaluated): {cp.experiment_name} step {cp.checkpoint_step}")
+                else:
+                    filtered.append(cp)
+            checkpoints = filtered
+            print(f"Filtered: {original_count} -> {len(checkpoints)} checkpoints ({original_count - len(checkpoints)} already evaluated)")
 
-        if not checkpoints:
-            print("All checkpoints already evaluated. Nothing to do.")
-            return
+            if not checkpoints:
+                print("All checkpoints already evaluated. Nothing to do.")
+                return
 
     # Load dataset
     print(f"\nLoading dataset: {args.dataset}")
@@ -1075,6 +1083,10 @@ def main(args):
         elif "final_answer" not in task and "ground_truth" in task:
             task["final_answer"] = task["ground_truth"]
         dataset_list.append(task)
+
+    if args.max_samples is not None and args.max_samples < len(dataset_list):
+        print(f"Limiting to first {args.max_samples} samples (trajectory-only mode)")
+        dataset_list = dataset_list[:args.max_samples]
 
     print(f"Dataset size: {len(dataset_list)} problems")
 
@@ -1155,7 +1167,8 @@ def main(args):
                     all_results.append(result)
 
                     # Save intermediate results (only the new result, not the full list)
-                    save_results_to_json([result], args.output_json)
+                    if args.max_samples is None:
+                        save_results_to_json([result], args.output_json)
 
                 except Exception as e:
                     print(f"Error evaluating {checkpoint.experiment_name}: {e}")
@@ -1177,7 +1190,11 @@ def main(args):
     print("=" * 60)
     print(f"Evaluation mode: {eval_mode.value}")
     print(f"Total checkpoints evaluated: {len(all_results)}")
-    print(f"Results appended to: {args.output_json}")
+    if args.max_samples is None:
+        print(f"Results appended to: {args.output_json}")
+    else:
+        print(f"Trajectory-only mode: results NOT saved to {args.output_json}")
+        print(f"Trajectories saved to: {args.trajectory_output_dir}")
 
     if all_results:
         has_multi_rollout = any(r.n_rollouts > 1 for r in all_results)
@@ -1367,6 +1384,14 @@ def parse_args():
         dest="share_context_with_workers",
         default=True,
         help="Whether to share context with workers in orchestrator-workers workflow (default: True)",
+    )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Limit evaluation to first N samples. When set, only saves trajectories "
+             "(requires --trajectory-output-dir) and skips writing to eval_results.jsonl. "
+             "Useful for trajectory analysis.",
     )
 
     return parser.parse_args()
