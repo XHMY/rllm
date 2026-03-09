@@ -99,6 +99,7 @@ rllm:
 
     n_parallel_tasks: 2048
     retry_limit: 3
+    code_executor_workers: 0  # 0 = use ThreadPoolExecutor (default); >0 = use ProcessPoolExecutor with N workers for code reward evaluation
 
   disable_thinking: True
   accumulate_reasoning: False

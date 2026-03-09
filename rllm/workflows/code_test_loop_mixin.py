@@ -77,7 +77,7 @@ class CodeTestLoopMixin:
             TestRoundResult with test execution details and feedback
         """
         # Run blocking code evaluation in thread pool to enable parallelism
-        reward_output = await self.run_in_executor(code_reward_fn, task, code)
+        reward_output = await self.run_in_code_executor(code_reward_fn, task, code)
 
         metadata = reward_output.metadata or {}
         test_results = metadata.get("test_results", [])

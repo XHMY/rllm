@@ -4,9 +4,17 @@ and assigns rewards based on their correctness on unit tests.
 """
 
 import ast
+import builtins
+import faulthandler
 import json
+import logging
 import multiprocessing
+import os
 import re
+import resource
+import shutil
+import subprocess
+import sys
 from typing import Any
 
 from rllm.rewards.code_utils.firejail_exec import code_exec_firejail as lc_code_exec
@@ -22,6 +30,67 @@ from rllm.rewards.code_utils.taco import run_test as taco_run_test
 from rllm.rewards.reward_types import RewardConfig, RewardOutput, RewardType
 from rllm.tools.code_tools.code_tool import CodeTool
 from rllm.tools.code_tools.together_tool import TogetherCodeTool
+
+_USE_DIRECT_EXECUTION = False
+
+
+def set_direct_execution(enabled: bool):
+    global _USE_DIRECT_EXECUTION
+    _USE_DIRECT_EXECUTION = enabled
+
+
+_SENTINEL = object()
+
+# Attributes that reliability_guard() sets to None
+_OS_ATTRS = [
+    "kill", "system", "putenv", "remove", "removedirs", "rmdir", "fchdir",
+    "setuid", "fork", "forkpty", "killpg", "rename", "renames", "truncate",
+    "replace", "unlink", "fchmod", "fchown", "chmod", "chown", "chroot",
+    "lchflags", "lchmod", "lchown", "getcwd", "chdir",
+]
+_SHUTIL_ATTRS = ["rmtree", "move", "chown"]
+_SYSMODULE_KEYS = ["ipdb", "joblib", "resource", "psutil", "tkinter"]
+
+
+def _save_reliability_guard_state():
+    """Save all attributes that reliability_guard() modifies."""
+    saved = {}
+    saved["os"] = {attr: getattr(os, attr, _SENTINEL) for attr in _OS_ATTRS}
+    saved["shutil"] = {attr: getattr(shutil, attr, _SENTINEL) for attr in _SHUTIL_ATTRS}
+    saved["subprocess_Popen"] = subprocess.Popen
+    saved["builtins_quit"] = getattr(builtins, "quit", _SENTINEL)
+    saved["builtins_help"] = __builtins__["help"] if isinstance(__builtins__, dict) else getattr(__builtins__, "help", _SENTINEL)
+    saved["sys_modules"] = {k: sys.modules.get(k, _SENTINEL) for k in _SYSMODULE_KEYS}
+    saved["faulthandler_enabled"] = faulthandler.is_enabled()
+    saved["recursion_limit"] = sys.getrecursionlimit()
+    return saved
+
+
+def _restore_reliability_guard_state(saved):
+    """Restore all attributes that reliability_guard() modifies."""
+    for attr, val in saved["os"].items():
+        if val is not _SENTINEL:
+            setattr(os, attr, val)
+    for attr, val in saved["shutil"].items():
+        if val is not _SENTINEL:
+            setattr(shutil, attr, val)
+    subprocess.Popen = saved["subprocess_Popen"]
+    if saved["builtins_quit"] is not _SENTINEL:
+        builtins.quit = saved["builtins_quit"]
+    if isinstance(__builtins__, dict):
+        if saved["builtins_help"] is not _SENTINEL:
+            __builtins__["help"] = saved["builtins_help"]
+    else:
+        if saved["builtins_help"] is not _SENTINEL:
+            __builtins__.help = saved["builtins_help"]
+    for k, val in saved["sys_modules"].items():
+        if val is _SENTINEL:
+            sys.modules.pop(k, None)
+        else:
+            sys.modules[k] = val
+    if saved["faulthandler_enabled"]:
+        faulthandler.enable()
+    sys.setrecursionlimit(saved["recursion_limit"])
 
 
 def extract_code_from_model(model_response: str):
@@ -183,6 +252,83 @@ def postprocess_lcb_sample(sample):
     return sample
 
 
+def lcb_check_correctness_direct(sample, generation, timeout=3, debug=False):
+    """Run lcb_run_test in a subprocess with kill-based timeout.
+    Called from ProcessPoolExecutor workers for problem-level parallelism.
+    The subprocess isolates reliability_guard() state corruption and provides
+    an uncatchable SIGKILL timeout via p.kill()."""
+    assert len(sample) >= 1, "Sample must contain at least one test case"
+    processed_sample = postprocess_lcb_sample(sample)
+
+    in_outs = json.loads(processed_sample["input_output"])
+    all_inputs = in_outs["inputs"]
+    all_outputs = in_outs["outputs"]
+    num_tests = len(all_inputs)
+
+    global_timeout = (timeout + 1) * num_tests + 5
+
+    # Spawn a subprocess to run lcb_run_test with kill-based timeout
+    parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
+    p = multiprocessing.Process(
+        target=_temp_run,
+        args=(processed_sample, generation, debug, child_conn, timeout),
+    )
+    p.start()
+    child_conn.close()
+
+    p.join(timeout=global_timeout)
+    if p.is_alive():
+        p.kill()
+        p.join(timeout=5)
+
+    # Read result from pipe
+    result, metadata = None, None
+    try:
+        if parent_conn.poll():
+            result, metadata = parent_conn.recv()
+    except (EOFError, OSError):
+        pass
+    finally:
+        parent_conn.close()
+
+    detailed_results = {"all_passed": False, "test_results": [], "total_tests": num_tests, "passed_tests": 0}
+
+    if result is None:
+        for j in range(num_tests):
+            detailed_results["test_results"].append({
+                "input": all_inputs[j],
+                "expected": all_outputs[j],
+                "passed": False,
+                "error": "global timeout or exception",
+            })
+        return False, detailed_results
+
+    for j in range(num_tests):
+        if j < len(result):
+            passed = result[j] == True
+            detail = {
+                "input": all_inputs[j],
+                "expected": all_outputs[j],
+                "passed": passed,
+                "error": metadata.get("error", None) if metadata else None,
+                "error_message": metadata.get("error_message", None) if metadata else None,
+                "output": metadata.get("output", None) if metadata else None,
+            }
+            detailed_results["test_results"].append(detail)
+        else:
+            detailed_results["test_results"].append({
+                "input": all_inputs[j],
+                "expected": all_outputs[j],
+                "passed": False,
+                "error": "skipped (prior test failed)",
+            })
+
+    detailed_results["passed_tests"] = sum(1 for t in detailed_results["test_results"] if t["passed"])
+    detailed_results["all_passed"] = all(t["passed"] for t in detailed_results["test_results"])
+
+    return detailed_results["all_passed"], detailed_results
+
+
 # https://huggingface.co/datasets/PrimeIntellect/verifiable-coding-problems
 def primeintellect_check_correctness(tests, code, use_tci=False):
     if isinstance(tests, str):
@@ -212,8 +358,12 @@ def primeintellect_check_correctness(tests, code, use_tci=False):
     return check_correctness(tests_formatted, code, taco_run_test)
 
 
-def _temp_run(sample, generation, debug, conn, timeout):
+def _temp_run(sample, generation, debug, conn, timeout, max_memory_bytes=4 * 1024 ** 3):
     try:
+        # Set memory limit to prevent LLM-generated code from consuming unbounded memory.
+        # RLIMIT_AS caps virtual address space; if exceeded, malloc/mmap fails with MemoryError.
+        if max_memory_bytes is not None:
+            resource.setrlimit(resource.RLIMIT_AS, (max_memory_bytes, max_memory_bytes))
         res, metadata = lcb_run_test(sample, test=generation, debug=debug, timeout=timeout)
         conn.send((res, metadata))
     except Exception as e:
@@ -526,9 +676,10 @@ class RewardCodeFn:
                 is_correct, test_details = codetool_check_correctness(tests, model_code, codetool, is_taco_format=True)
             else:
                 tests = taco_to_lcb_format(tests)
-                is_correct, test_details = lcb_check_correctness_v2(tests, model_code, debug=False)
-                # test_fn = taco_run_test
-                # is_correct, test_details = check_correctness(tests, model_code, test_fn)
+                if _USE_DIRECT_EXECUTION:
+                    is_correct, test_details = lcb_check_correctness_direct(tests, model_code, debug=False)
+                else:
+                    is_correct, test_details = lcb_check_correctness_v2(tests, model_code, debug=False)
         elif dataset_name == "leetcode":
             is_correct, test_details = leetcode_check_correctness(tests, model_code)
         elif dataset_name in ["livecodebench", "codeforces", "primeintellect"]:
@@ -540,7 +691,10 @@ class RewardCodeFn:
                     print("test json invalid: ", tests)
                     return RewardOutput(reward=self.config.format_error_reward, is_correct=False,
                                         metadata={"error": "Tests in task_info is invalid json"})
-            is_correct, test_details = lcb_check_correctness_v2(tests, model_code, debug=False)
+            if _USE_DIRECT_EXECUTION:
+                is_correct, test_details = lcb_check_correctness_direct(tests, model_code, debug=False)
+            else:
+                is_correct, test_details = lcb_check_correctness_v2(tests, model_code, debug=False)
         elif dataset_name == "kodcode":
             is_correct, test_details = kodcode_check_correctness(tests, model_code)
         elif dataset_name == "humanevalplus":

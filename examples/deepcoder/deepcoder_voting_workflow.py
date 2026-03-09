@@ -206,7 +206,7 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
         response: str,
     ) -> RewardOutput:
         """Compute reward using test execution (async for parallelism)."""
-        return await self.run_in_executor(code_reward_fn, task, response)
+        return await self.run_in_code_executor(code_reward_fn, task, response)
 
     async def compute_aggregator_reward(
         self,
@@ -214,7 +214,7 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
         selected_response: str,
     ) -> RewardOutput:
         """Compute reward for aggregator based on selected solution (async for parallelism)."""
-        return await self.run_in_executor(code_reward_fn, task, selected_response)
+        return await self.run_in_code_executor(code_reward_fn, task, selected_response)
 
     # ===== Workflow execution =====
 
