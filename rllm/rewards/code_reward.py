@@ -5,7 +5,9 @@ and assigns rewards based on their correctness on unit tests.
 
 import ast
 import json
+import logging
 import multiprocessing
+import os
 import re
 import resource
 from typing import Any
@@ -23,6 +25,8 @@ from rllm.rewards.code_utils.taco import run_test as taco_run_test
 from rllm.rewards.reward_types import RewardConfig, RewardOutput, RewardType
 from rllm.tools.code_tools.code_tool import CodeTool
 from rllm.tools.code_tools.together_tool import TogetherCodeTool
+
+logger = logging.getLogger(__name__)
 
 _USE_DIRECT_EXECUTION = False
 
@@ -144,6 +148,7 @@ def check_correctness(tests: list[dict[str, str]] | dict[str, list[str]], code: 
         pass
     finally:
         parent_conn.close()
+        process.close()
 
     detailed_results: dict[str, Any] = {"all_passed": False, "test_results": [], "total_tests": num_tests, "passed_tests": 0}
 
@@ -229,6 +234,7 @@ def lcb_check_correctness_direct(sample, generation, timeout=3, debug=False):
         pass
     finally:
         parent_conn.close()
+        p.close()  # Release subprocess resources to prevent zombie/resource leaks
 
     detailed_results = {"all_passed": False, "test_results": [], "total_tests": num_tests, "passed_tests": 0}
 
@@ -306,9 +312,19 @@ def _temp_run(sample, generation, debug, conn, timeout, max_memory_bytes=4 * 102
         res, metadata = lcb_run_test(sample, test=generation, debug=debug, timeout=timeout)
         conn.send((res, metadata))
     except Exception as e:
-        print(f"Error in _temp_run: {e}")
+        # MemoryError is a subclass of Exception, so this catches OOM from RLIMIT_AS.
+        # Send a failure result so the parent can distinguish error type from timeout.
+        try:
+            error_name = type(e).__name__
+            conn.send(([-4], {"error_code": -4, "error_message": f"{error_name}: {e}"}))
+        except Exception:
+            pass  # If even sending fails (e.g. deep OOM), parent gets None → counted as failure
     finally:
         conn.close()
+        # Hard-exit to skip atexit handlers (e.g. Ray's shutdown callback).
+        # Under RLIMIT_AS, atexit handlers fail with MemoryError when trying to import modules.
+        # The pipe is already closed, so results are safely delivered to the parent.
+        os._exit(0)
 
 
 def lcb_check_correctness_v2(sample, generation, timeout=3, debug=False, batch_size=5):
@@ -364,6 +380,13 @@ def lcb_check_correctness_v2(sample, generation, timeout=3, debug=False, batch_s
         if p.is_alive():
             p.kill()
             p.join(timeout=5)
+
+    # Release subprocess resources to prevent zombie/resource leaks
+    for p in processes:
+        try:
+            p.close()
+        except ValueError:
+            pass  # Already closed
 
     # Collect results from pipes
     batch_results = []
@@ -610,36 +633,47 @@ class RewardCodeFn:
         is_correct = False
         test_details: dict[str, Any] = {}
 
-        if dataset_name in ["taco", "apps", "code_contests"]:
-            if self.config.use_together_code_interpreter:
-                is_correct, test_details = codetool_check_correctness(tests, model_code, codetool, is_taco_format=True)
-            else:
-                tests = taco_to_lcb_format(tests)
+        try:
+            if dataset_name in ["taco", "apps", "code_contests"]:
+                if self.config.use_together_code_interpreter:
+                    is_correct, test_details = codetool_check_correctness(tests, model_code, codetool, is_taco_format=True)
+                else:
+                    tests = taco_to_lcb_format(tests)
+                    if _USE_DIRECT_EXECUTION:
+                        is_correct, test_details = lcb_check_correctness_direct(tests, model_code, debug=False)
+                    else:
+                        is_correct, test_details = lcb_check_correctness_v2(tests, model_code, debug=False)
+            elif dataset_name == "leetcode":
+                is_correct, test_details = leetcode_check_correctness(tests, model_code)
+            elif dataset_name in ["livecodebench", "codeforces", "primeintellect"]:
+                # Handle case where tests is a JSON string
+                if isinstance(tests, str):
+                    try:
+                        tests = json.loads(tests)
+                    except json.decoder.JSONDecodeError:
+                        print("test json invalid: ", tests)
+                        return RewardOutput(reward=self.config.format_error_reward, is_correct=False,
+                                            metadata={"error": "Tests in task_info is invalid json"})
                 if _USE_DIRECT_EXECUTION:
                     is_correct, test_details = lcb_check_correctness_direct(tests, model_code, debug=False)
                 else:
                     is_correct, test_details = lcb_check_correctness_v2(tests, model_code, debug=False)
-        elif dataset_name == "leetcode":
-            is_correct, test_details = leetcode_check_correctness(tests, model_code)
-        elif dataset_name in ["livecodebench", "codeforces", "primeintellect"]:
-            # Handle case where tests is a JSON string
-            if isinstance(tests, str):
-                try:
-                    tests = json.loads(tests)
-                except json.decoder.JSONDecodeError:
-                    print("test json invalid: ", tests)
-                    return RewardOutput(reward=self.config.format_error_reward, is_correct=False,
-                                        metadata={"error": "Tests in task_info is invalid json"})
-            if _USE_DIRECT_EXECUTION:
-                is_correct, test_details = lcb_check_correctness_direct(tests, model_code, debug=False)
+            elif dataset_name == "kodcode":
+                is_correct, test_details = kodcode_check_correctness(tests, model_code)
+            elif dataset_name == "humanevalplus":
+                is_correct, test_details = humanevalplus_check_correctness(tests, model_code)
             else:
-                is_correct, test_details = lcb_check_correctness_v2(tests, model_code, debug=False)
-        elif dataset_name == "kodcode":
-            is_correct, test_details = kodcode_check_correctness(tests, model_code)
-        elif dataset_name == "humanevalplus":
-            is_correct, test_details = humanevalplus_check_correctness(tests, model_code)
-        else:
-            raise NotImplementedError(f"Dataset {dataset_name} not implemented")
+                raise NotImplementedError(f"Dataset {dataset_name} not implemented")
+        except NotImplementedError:
+            raise  # Programming error — don't silently swallow
+        except Exception as e:
+            # Safety net: catch any exception (including MemoryError) to prevent
+            # crashing the ProcessPoolExecutor worker, which would cause BrokenProcessPool.
+            logger.warning(
+                "RewardCodeFn: exception during correctness check: %s: %s", type(e).__name__, e
+            )
+            return RewardOutput(reward=self.config.incorrect_reward, is_correct=False,
+                                metadata={"error": f"{type(e).__name__}: {e}"})
 
         # total_time = time.time() - total_start_time
         # print(f"Total reward function execution time: {total_time:.2f} seconds")
