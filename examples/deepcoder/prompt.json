@@ -50,8 +50,25 @@
       "required_variables": ["problem", "solutions"]
     }
   },
+  "deepcoder_orchestrator_workers_prompts": {
+    "orchestrator_decompose": {
+      "template": "You are an expert programming coordinator. Your task is to analyze the following programming problem and break it down into at most {max_subtasks} simpler subtasks that can be solved independently.\n\nProblem:\n{problem}\n\nInstructions:\n1. Identify the key components or steps needed to solve this problem\n2. Break it down into at most {max_subtasks} independent subtasks\n3. Each subtask should describe a specific function or module to implement\n4. Format your response as:\n   SUBTASK 1: [description of first subtask]\n   SUBTASK 2: [description of second subtask]\n   (and so on, up to {max_subtasks} subtasks maximum)\n\nDecompose the problem now:",
+      "description": "Prompt for orchestrator to decompose coding problem into subtasks",
+      "required_variables": ["problem", "max_subtasks"]
+    },
+    "worker_solve": {
+      "template": "You are an expert competitive programmer working on a specific part of a larger problem.\n\n{context}\n\nYour assigned subtask: {subtask}\n\nInstructions:\n1. Solve this specific subtask step by step\n2. Write clean, efficient Python code\n3. Handle all edge cases\n4. Output your code in a markdown code block with ```python\n\nProvide your solution:",
+      "description": "Prompt for worker to solve a specific subtask",
+      "required_variables": ["context", "subtask"]
+    },
+    "orchestrator_synthesize": {
+      "template": "You are an expert programming coordinator. Your task is to synthesize the solutions from multiple subtasks into a single, complete solution.\n\nOriginal problem:\n{problem}\n\nSubtask solutions:{solutions}\n\nInstructions:\n1. Review all subtask solutions\n2. Combine them into a single, complete, runnable Python program\n3. Ensure proper integration between components\n4. Handle all edge cases\n5. Output your final code in a markdown code block with ```python\n\nProvide the complete solution:",
+      "description": "Prompt for synthesizer to combine worker solutions into final code",
+      "required_variables": ["problem", "solutions"]
+    }
+  },
   "metadata": {
-    "version": "1.2",
+    "version": "1.3",
     "created_date": "2026-01-08",
     "updated_date": "2026-01-09",
     "description": "Prompt templates for Deepcoder workflows",
@@ -60,7 +77,8 @@
       "The \\boxed{} format requires double braces due to Python string formatting",
       "deepcoder_single_agent_prompts: Used by SingleAgentDeepcodeWorkflow",
       "deepcoder_evaluator_optimizer_prompts: Used by DeepcodeEvaluatorOptimizerWorkflow",
-      "deepcoder_voting_prompts: Used by DeepcodeVotingWorkflow"
+      "deepcoder_voting_prompts: Used by DeepcodeVotingWorkflow",
+      "deepcoder_orchestrator_workers_prompts: Used by DeepcodeOrchestratorWorkersWorkflow"
     ]
   }
 }

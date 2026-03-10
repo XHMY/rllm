@@ -25,17 +25,17 @@ export VERL_LOGGING_LEVEL=INFO
 
 
 python3 -m examples.deepcoder.train_deepcoder_evaluator_optimizer \
-    data.max_prompt_length=30720 \
+    data.max_prompt_length=10240 \
     data.max_response_length=2048 \
-    actor_rollout_ref.model.path=Qwen/Qwen3-1.7B \
+    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_4b_s300_deepcoder \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    trainer.experiment_name='evaluator_optimizer-qwen3_1.7b-deepcoder' \
+    trainer.experiment_name='evaluator_optimizer-qwen3_4b_s300-deepcoder' \
     trainer.n_gpus_per_node=2 \
     trainer.share_policy=False \
     trainer.agent_names=['generator','evaluator'] \
     rllm.workflow.use_final_outcome_reward=true \
-    rllm.workflow.n_parallel_tasks=1024 \
     +rllm.workflow.max_iterations=2 \
     +rllm.workflow.enable_test_loop=False
 
-pkill -9 -f 'ray::WorkerDict'
+# pkill -9 -f 'ray::WorkerDict'

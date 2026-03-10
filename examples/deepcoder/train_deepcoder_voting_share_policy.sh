@@ -27,9 +27,9 @@ python3 -m examples.deepcoder.train_deepcoder_voting \
     actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_4b_s300_deepcoder \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
     trainer.project_name='rllm-workflow-MARL' \
-    trainer.experiment_name='voting-qwen3_4b_s300-deepcoder' \
+    trainer.experiment_name='voting-qwen3_4b_s300-share_policy-deepcoder' \
     trainer.n_gpus_per_node=2 \
-    trainer.share_policy=False \
+    trainer.share_policy=True \
     trainer.agent_names=['generator','aggregator'] \
     rllm.workflow.use_final_outcome_reward=true \
     +rllm.workflow.n_votes=3 \

@@ -308,7 +308,7 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
             response = traj.steps[0].action
             responses.append(response)
 
-            reward_result = self.compute_generator_reward(task, response)
+            reward_result = await self.compute_generator_reward(task, response)
             traj.steps[0].reward = reward_result.reward
             traj.reward = reward_result.reward
 
@@ -333,7 +333,7 @@ class DeepcodeVotingWorkflow(CodeTestLoopMixin, VotingWorkflow):
         )
 
         # Compute aggregator reward
-        agg_reward = self.compute_aggregator_reward(task, selected_response)
+        agg_reward = await self.compute_aggregator_reward(task, selected_response)
 
         aggregator_trajectory = Trajectory(
             name=self.AGGREGATOR_NAME,
