@@ -39,10 +39,10 @@ CHECKPOINTS_DIR="checkpoints/rllm-workflow-MARL-v2"
 DATASET="dapo_math"
 N_ROLLOUTS=1
 N_PARALLEL=512
-PARTITION="dgxh"
-CONSTRAINT=""
+PARTITION="preempt"
+CONSTRAINT="l40s"
 MEM_PER_GPU="80G"
-TIME_LIMIT="0-12:00:00"
+TIME_LIMIT="1-0:00:00"
 DRY_RUN=false
 
 # --- Parse arguments ---

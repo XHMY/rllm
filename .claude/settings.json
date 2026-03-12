@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(*)",
+      "Bash(source ~/.bashrc)",
+      "Bash(conda activate rllm)",
+      "Bash(python3:*)",
+      "Bash(git log:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(find:*)",
+      "Bash(du:*)",
+      "Bash(chmod:*)",
+      "WebFetch(domain:docs.vllm.ai)",
+      "Bash(grep:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python -m examples.math_reasoning.evaluate_checkpoints:*)",
+      "Bash(source:*)",
+      "Bash(done)",
+      "Bash(sort:*)",
+      "Bash(python:*)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(conda run -n rllm python -m pytest:*)",
+      "WebFetch(domain:datasets-server.huggingface.co)",
+      "Bash(ls:*)",
+      "Bash(git -C \"/nfs/hpc/share/zengyif/workspace/rllm_0.2.1\" log --all --oneline --grep=\"merge\" -20)",
+      "Bash(xargs -I {} bash -c 'grep -l \"\"global_step_430\\\\|qwen3_1.7b-math_single_agent\"\" {}/../*.log 2>/dev/null || echo \"\"Not found in {}\"\"')",
+      "Bash(conda run:*)",
+      "Bash(git diff:*)",
+      "Bash(bash:*)",
+      "Bash(cd /nfs/hpc/share/zengyif/workspace/rllm_0.2.1/COLM2026-Multi-agent-RL && pdflatex -interaction=nonstopmode colm2026_conference.tex 2>&1 | tail -30)",
+      "Bash(bash examples/math_reasoning/launch_experiment.sh --workflow orchestrator_workers --model 1.7B --share-policy false --node 2xH100 --dry-run 2>&1; echo \"exit: $?\")",
+      "Bash(bash examples/math_reasoning/launch_experiment.sh 2>&1; echo \"exit: $?\")"
+    ]
+  }
+}

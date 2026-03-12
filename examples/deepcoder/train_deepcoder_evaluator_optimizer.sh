@@ -1,15 +1,19 @@
 #!/bin/bash
-# Training script for Deepcoder Evaluator-Optimizer Workflow (2-agent pattern with test loops)
-#
-# This script trains a 2-agent workflow for code generation:
-# - Generator: Creates code AND refines based on feedback
-# - Evaluator: Reviews code logic and provides feedback
-#
-# Nested loops:
-# - Outer loop: Test rounds (generate -> test -> refine with test feedback)
-# - Inner loop: Eval-opt (generate -> evaluate logic -> refine with eval feedback)
-#
-# Usage: bash examples/deepcoder/train_deepcoder_evaluator_optimizer.sh
+#SBATCH --job-name=verl-ray
+#SBATCH --account=hw-grp
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
+#SBATCH --partition=dgxh
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-gpu=16
+#SBATCH --mem-per-gpu=128G
+#SBATCH --exclude=dgxh-1
+#SBATCH --time=1-0:00:00
+
+unset ROCR_VISIBLE_DEVICES
+unset HIP_VISIBLE_DEVICES
+source ~/.bashrc && conda activate rllm
 
 set -x
 
@@ -27,15 +31,16 @@ export VERL_LOGGING_LEVEL=INFO
 python3 -m examples.deepcoder.train_deepcoder_evaluator_optimizer \
     data.max_prompt_length=10240 \
     data.max_response_length=2048 \
-    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_4b_s300_deepcoder \
+    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
     trainer.project_name='rllm-workflow-MARL-v2' \
-    trainer.experiment_name='evaluator_optimizer-qwen3_4b_s300-deepcoder' \
+    trainer.experiment_name='evaluator_optimizer-qwen3_4b-deepcoder' \
     trainer.n_gpus_per_node=2 \
     trainer.share_policy=False \
     trainer.agent_names=['generator','evaluator'] \
     rllm.workflow.use_final_outcome_reward=true \
     +rllm.workflow.max_iterations=2 \
-    +rllm.workflow.enable_test_loop=False
+    +rllm.workflow.enable_test_loop=False \
+    rllm.workflow.code_executor_workers=48
 
 # pkill -9 -f 'ray::WorkerDict'

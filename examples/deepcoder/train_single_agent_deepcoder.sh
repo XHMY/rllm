@@ -1,13 +1,19 @@
 #!/bin/bash
-# ProcessPoolExecutor: code_executor_workers=64 (persistent worker processes)
-#
-# Uses a dedicated ProcessPoolExecutor with 64 workers for code reward evaluation.
-# Each worker spawns a subprocess (multiprocessing.Process) per problem with kill-based
-# timeout via p.kill(), preventing hangs from user code catching TimeoutException.
-#
-# Compare wall-clock time against train_single_agent_deepcoder_baseline.sh to measure speedup.
-#
-# Usage: bash examples/deepcoder/train_single_agent_deepcoder_process_pool.sh
+#SBATCH --job-name=verl-ray
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
+#SBATCH --partition=preempt
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-gpu=4
+#SBATCH --mem-per-gpu=48G
+#SBATCH --constraint=l40s
+#SBATCH --time=7-00:00:00
+#SBATCH --requeue
+
+unset ROCR_VISIBLE_DEVICES
+unset HIP_VISIBLE_DEVICES
+source ~/.bashrc && conda activate rllm
 
 set -x
 
@@ -23,11 +29,11 @@ export VERL_LOGGING_LEVEL=INFO
 python3 -m examples.deepcoder.train_single_agent_deepcoder \
     data.max_prompt_length=4096 \
     data.max_response_length=2048 \
-    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
-    trainer.project_name='rllm-workflow-MARL-v2-deepcoder' \
-    trainer.experiment_name='single_agent-qwen3_4b-deepcoder' \
-    trainer.n_gpus_per_node=2 \
+    actor_rollout_ref.model.path=Qwen/Qwen3-1.7B \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=23554 \
+    trainer.project_name='rllm-workflow-MARL-v2' \
+    trainer.experiment_name='single_agent-qwen3_1.7b-deepcoder' \
+    trainer.n_gpus_per_node=4 \
     trainer.share_policy=False \
     trainer.agent_names=['generator'] \
     trainer.log_episodes=False \
@@ -36,3 +42,6 @@ python3 -m examples.deepcoder.train_single_agent_deepcoder \
     trainer.total_training_steps=301
 
 pkill -9 -f 'ray::WorkerDict'
+
+
+# 4B for H100: actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \

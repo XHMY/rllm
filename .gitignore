@@ -1,3 +1,5 @@
+/eval_results.jsonl
+.gradio
 
 trajectory_outputs/
 evaluation_trajectories/

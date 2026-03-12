@@ -24,15 +24,16 @@ export VERL_LOGGING_LEVEL=INFO
 python3 -m examples.deepcoder.train_deepcoder_voting \
     data.max_prompt_length=10240 \
     data.max_response_length=2048 \
-    actor_rollout_ref.model.path=checkpoints/init_weight/qwen3_4b_s300_deepcoder \
+    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
     trainer.project_name='rllm-workflow-MARL' \
-    trainer.experiment_name='voting-qwen3_4b_s300-deepcoder' \
+    trainer.experiment_name='voting-qwen3_4b-deepcoder' \
     trainer.n_gpus_per_node=2 \
     trainer.share_policy=False \
     trainer.agent_names=['generator','aggregator'] \
     rllm.workflow.use_final_outcome_reward=true \
     +rllm.workflow.n_votes=3 \
-    +rllm.workflow.enable_test_loop=False
+    +rllm.workflow.enable_test_loop=False \
+    rllm.workflow.code_executor_workers=94
 
 pkill -9 -f 'ray::WorkerDict'

@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=verl-ray
+#SBATCH --account=hw-grp
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --partition=dgxh
