@@ -1085,6 +1085,7 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
             "global_steps": self.global_steps,
             "experiment_name": self.config.trainer.experiment_name,
             "project_name": self.config.trainer.project_name,
+            "slurm_job_id": os.environ.get("SLURM_JOB_ID", None),
         }
 
         # Save wandb run ID if available
