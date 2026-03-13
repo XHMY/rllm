@@ -349,7 +349,15 @@ function renderEvalCards(ev) {
     return;
   }
 
-  let html = '<div class="eval-cards">';
+  // Summary: evaluated vs total checkpoints
+  let html = '';
+  if (ev.total_checkpoints != null) {
+    const evaled = ev.evaluated_checkpoints || 0;
+    const total = ev.total_checkpoints;
+    html += `<p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:0.5rem">Evaluated ${evaled} / ${total} checkpoints</p>`;
+  }
+
+  html += '<div class="eval-cards">';
 
   for (const ds of datasets) {
     // Filter rows that have data for this dataset
@@ -572,27 +580,35 @@ $('#resume-dryrun-btn').addEventListener('click', () => doResume(true));
 
 async function doResume(dryRun) {
   const exp = getSelectedExp();
-  if (!exp) return;
+  if (!exp) {
+    showOutput(actionOutput, 'No experiment selected.');
+    return;
+  }
 
-  // Auto-derive from experiment metadata
-  const sharePolicy = exp.policy === 'share_policy' ? 'true' : 'false';
-  const taskType = inferTaskType(exp.dataset);
-  const nGpus = exp.gpu_count != null ? exp.gpu_count : parseInt($('#resume-n-gpus').value);
+  try {
+    // Auto-derive from experiment metadata
+    const sharePolicy = exp.policy === 'share_policy' ? 'true' : 'false';
+    const taskType = inferTaskType(exp.dataset);
+    const nGpus = exp.gpu_count != null ? exp.gpu_count : parseInt($('#resume-n-gpus').value);
 
-  const data = await api('POST', '/api/launch', {
-    workflow: exp.workflow,
-    model: exp.model,
-    share_policy: sharePolicy,
-    node: $('#resume-slurm-config').value,
-    task_type: taskType,
-    n_gpus: nGpus,
-    cpus_per_gpu: parseInt($('#resume-cpus-per-gpu').value),
-    mem_per_gpu: $('#resume-mem-per-gpu').value,
-    extra_args: '',
-    dry_run: dryRun,
-  });
-  showOutput(actionOutput, data.output);
-  if (!dryRun) await loadExperiments();
+    const data = await api('POST', '/api/launch', {
+      workflow: exp.workflow,
+      model: exp.model.toUpperCase(),
+      share_policy: sharePolicy,
+      node: $('#resume-slurm-config').value,
+      task_type: taskType,
+      n_gpus: nGpus,
+      cpus_per_gpu: parseInt($('#resume-cpus-per-gpu').value),
+      mem_per_gpu: $('#resume-mem-per-gpu').value,
+      extra_args: '',
+      dry_run: dryRun,
+    });
+    showOutput(actionOutput, data.output || data.message || 'No output returned.');
+    if (!dryRun) await loadExperiments();
+  } catch (err) {
+    console.error('doResume error:', err);
+    showOutput(actionOutput, `Error: ${err.message}`);
+  }
 }
 
 // ── Refresh button ───────────────────────────────────────────────────────

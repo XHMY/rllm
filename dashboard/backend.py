@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from dashboard.task_configs import EVAL_DATASETS, infer_task_type
+from dashboard.task_configs import EVAL_DATASETS, infer_task_type, resolve_launch_params
 
 DEFAULT_CHECKPOINT_DIR = "checkpoints"
 DEFAULT_PROJECT = "rllm-workflow-MARL-v2"
@@ -309,7 +309,9 @@ def get_eval_results_table(experiment_name: str, checkpoint_dir: str) -> dict:
     """Return structured eval results for an experiment."""
     eval_results = load_eval_results(experiment_name, checkpoint_dir)
     if not eval_results:
-        return {"datasets": [], "rows": [], "best": {}}
+        exp_dir = Path(checkpoint_dir) / DEFAULT_PROJECT / experiment_name
+        total_checkpoints = sum(1 for d in exp_dir.glob("global_step_*") if d.is_dir()) if exp_dir.is_dir() else 0
+        return {"datasets": [], "rows": [], "best": {}, "total_checkpoints": total_checkpoints, "evaluated_checkpoints": 0}
 
     datasets = sorted({r.get("dataset", "") for r in eval_results if r.get("dataset")})
 
@@ -349,7 +351,18 @@ def get_eval_results_table(experiment_name: str, checkpoint_dir: str) -> dict:
         if best_acc is not None:
             best[ds] = {"accuracy": best_acc, "step": best_step}
 
-    return {"datasets": datasets, "rows": rows, "best": best}
+    # Count total vs evaluated checkpoints
+    exp_dir = Path(checkpoint_dir) / DEFAULT_PROJECT / experiment_name
+    total_checkpoints = sum(1 for d in exp_dir.glob("global_step_*") if d.is_dir()) if exp_dir.is_dir() else 0
+    evaluated_steps = len({r.get("checkpoint_step") for r in eval_results if r.get("checkpoint_step") is not None})
+
+    return {
+        "datasets": datasets,
+        "rows": rows,
+        "best": best,
+        "total_checkpoints": total_checkpoints,
+        "evaluated_checkpoints": evaluated_steps,
+    }
 
 
 # ── Assign SLURM Job ID ─────────────────────────────────────────────────────
@@ -494,6 +507,11 @@ python -m dashboard.evaluate_checkpoints \\
 # ── Launch / cancel ──────────────────────────────────────────────────────────
 
 
+def format_agent_names(names: list[str]) -> str:
+    """Format agent names list as a Hydra-compatible string, e.g. "['generator','evaluator']"."""
+    return "[" + ",".join(f"'{n}'" for n in names) + "]"
+
+
 def launch_experiment(
     workflow: str,
     model: str,
@@ -507,6 +525,11 @@ def launch_experiment(
     mem_per_gpu: str = "48G",
 ) -> str:
     """Call launch_experiment.sh and return its output."""
+    try:
+        params = resolve_launch_params(task_type, workflow, model)
+    except ValueError as e:
+        return f"ERROR: {e}"
+
     config_path = SLURM_CONFIGS_DIR / f"{node}.conf"
     cmd = [
         "bash",
@@ -519,6 +542,12 @@ def launch_experiment(
         "--n-gpus", str(n_gpus),
         "--cpus-per-gpu", str(cpus_per_gpu),
         "--mem-per-gpu", mem_per_gpu,
+        "--entry-point", params["entry_point"],
+        "--agent-names", format_agent_names(params["agent_names"]),
+        "--model-path", params["model_path"],
+        "--max-prompt", str(params["max_prompt_length"]),
+        "--max-response", str(params["max_response_length"]),
+        "--workflow-params", params["workflow_params"],
     ]
     if extra_args.strip():
         cmd += ["--extra-args", extra_args.strip()]

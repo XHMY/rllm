@@ -30,6 +30,12 @@ TASK_TYPE="math"
 N_GPUS=""
 CPUS_PER_GPU=""
 MEM_PER_GPU=""
+ENTRY_POINT=""
+AGENT_NAMES_OVERRIDE=""
+MODEL_PATH_OVERRIDE=""
+MAX_PROMPT=""
+MAX_RESPONSE=""
+WORKFLOW_PARAMS_OVERRIDE=""
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -43,9 +49,15 @@ while [[ $# -gt 0 ]]; do
         --project-name)  PROJECT_NAME="$2";   shift 2 ;;
         --extra-args)    EXTRA_ARGS="$2";     shift 2 ;;
         --task-type)     TASK_TYPE="$2";      shift 2 ;;
-        --n-gpus)        N_GPUS="$2";        shift 2 ;;
-        --cpus-per-gpu)  CPUS_PER_GPU="$2";  shift 2 ;;
-        --mem-per-gpu)   MEM_PER_GPU="$2";   shift 2 ;;
+        --n-gpus)        N_GPUS="$2";                shift 2 ;;
+        --cpus-per-gpu)  CPUS_PER_GPU="$2";          shift 2 ;;
+        --mem-per-gpu)   MEM_PER_GPU="$2";           shift 2 ;;
+        --entry-point)       ENTRY_POINT="$2";              shift 2 ;;
+        --agent-names)       AGENT_NAMES_OVERRIDE="$2";     shift 2 ;;
+        --model-path)        MODEL_PATH_OVERRIDE="$2";      shift 2 ;;
+        --max-prompt)        MAX_PROMPT="$2";               shift 2 ;;
+        --max-response)      MAX_RESPONSE="$2";             shift 2 ;;
+        --workflow-params)   WORKFLOW_PARAMS_OVERRIDE="$2";  shift 2 ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
@@ -71,7 +83,7 @@ if [[ -z "$SLURM_CONFIG" && -z "$NODE" ]]; then
     exit 1
 fi
 
-# ── Lookup functions ─────────────────────────────────────────────────────────
+# ── Fallback lookup functions (used for direct CLI invocation; dashboard path passes values via CLI args) ──
 
 get_entry_point() {
     local task="$1" wf="$2"
@@ -124,7 +136,8 @@ get_workflow_params() {
 get_prompt_response_len() {
     local task="$1" wf="$2"
     case "${task}_${wf}" in
-        math_evaluator_optimizer|math_voting)        echo "30720 5120" ;;
+        math_evaluator_optimizer)                     echo "30720 5120" ;;
+        math_voting)                                  echo "20480 5120" ;;
         math_orchestrator_workers)                    echo "20480 3072" ;;
         math_single_agent)                            echo "15360 5120" ;;
         deepcoder_evaluator_optimizer|deepcoder_voting|deepcoder_orchestrator_workers)
@@ -215,12 +228,16 @@ fi
 model_lower=$(echo "$MODEL" | tr '[:upper:]' '[:lower:]')
 exp_name="${WORKFLOW}-qwen3_${model_lower}-${policy_suffix}-${TASK_TYPE}"
 
-# ── Resolve parameters ──────────────────────────────────────────────────────
-entry_point=$(get_entry_point "$TASK_TYPE" "$WORKFLOW")
-agent_names=$(get_agent_names "$WORKFLOW")
-workflow_params=$(get_workflow_params "$TASK_TYPE" "$WORKFLOW")
-read -r max_prompt max_response <<< "$(get_prompt_response_len "$TASK_TYPE" "$WORKFLOW")"
-model_path=$(get_model_path "$MODEL")
+# ── Resolve parameters (prefer CLI args from dashboard, fall back to shell lookups) ──
+entry_point="${ENTRY_POINT:-$(get_entry_point "$TASK_TYPE" "$WORKFLOW")}"
+agent_names="${AGENT_NAMES_OVERRIDE:-$(get_agent_names "$WORKFLOW")}"
+model_path="${MODEL_PATH_OVERRIDE:-$(get_model_path "$MODEL")}"
+if [[ -n "$MAX_PROMPT" && -n "$MAX_RESPONSE" ]]; then
+    max_prompt="$MAX_PROMPT"; max_response="$MAX_RESPONSE"
+else
+    read -r max_prompt max_response <<< "$(get_prompt_response_len "$TASK_TYPE" "$WORKFLOW")"
+fi
+workflow_params="${WORKFLOW_PARAMS_OVERRIDE:-$(get_workflow_params "$TASK_TYPE" "$WORKFLOW")}"
 ppo_max_token_len=$(get_ppo_max_token_len "$MODEL" "$GPU_TYPE")
 
 # ── Build sbatch script ─────────────────────────────────────────────────────

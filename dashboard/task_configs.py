@@ -19,7 +19,7 @@ TASK_CONFIGS = {
         "experiment_suffix": "math",
         "prompt_response_lengths": {
             "evaluator_optimizer": (30720, 5120),
-            "voting": (30720, 5120),
+            "voting": (20480, 5120),
             "orchestrator_workers": (20480, 3072),
             "single_agent": (15360, 5120),
         },
@@ -69,17 +69,22 @@ TASK_CONFIGS = {
             "evaluator_optimizer": {
                 "max_iterations": 2,
                 "use_final_outcome_reward": True,
+                "enable_test_loop": False,
             },
             "voting": {
                 "n_votes": 3,
                 "use_final_outcome_reward": True,
+                "enable_test_loop": False,
             },
             "orchestrator_workers": {
                 "max_subtasks": 3,
                 "use_final_outcome_reward": True,
                 "share_main_task_with_workers": False,
+                "enable_test_loop": False,
             },
-            "single_agent": {},
+            "single_agent": {
+                "enable_test_loop": False,
+            },
         },
         "extra_sbatch_cmds": "ulimit -n 1048576",
         "experiment_filter_include": "deepcoder",
@@ -119,3 +124,42 @@ def get_task_config(task_type: str) -> dict:
     if task_type not in TASK_CONFIGS:
         raise ValueError(f"Unknown task type: {task_type!r}. Expected one of: {list(TASK_CONFIGS.keys())}")
     return TASK_CONFIGS[task_type]
+
+
+# ── Hydra override helpers ──────────────────────────────────────────────────
+
+# Keys that already exist in the base Hydra config (no '+' prefix needed)
+_HYDRA_BASE_KEYS = {"use_final_outcome_reward"}
+
+
+def workflow_params_to_hydra(params: dict) -> str:
+    """Convert a workflow_params dict to a Hydra override string."""
+    parts = []
+    for key, value in params.items():
+        val_str = str(value).lower() if isinstance(value, bool) else str(value)
+        prefix = "" if key in _HYDRA_BASE_KEYS else "+"
+        parts.append(f"{prefix}rllm.workflow.{key}={val_str}")
+    return " ".join(parts)
+
+
+def resolve_launch_params(task_type: str, workflow: str, model_key: str) -> dict:
+    """Resolve all launch parameters from the central config.
+
+    Returns a dict with: entry_point, agent_names, workflow_params (Hydra string),
+    max_prompt_length, max_response_length, model_path.
+    """
+    config = get_task_config(task_type)
+    model_lower = model_key.lower()
+    if workflow not in config["entry_points"]:
+        raise ValueError(f"Unknown workflow {workflow!r} for task {task_type!r}")
+    if model_lower not in MODEL_MAP:
+        raise ValueError(f"Unknown model {model_key!r}")
+    prompt_len, response_len = config["prompt_response_lengths"][workflow]
+    return {
+        "entry_point": config["entry_points"][workflow],
+        "agent_names": AGENT_NAMES_MAP[workflow],
+        "workflow_params": workflow_params_to_hydra(config["workflow_params"].get(workflow, {})),
+        "max_prompt_length": prompt_len,
+        "max_response_length": response_len,
+        "model_path": MODEL_MAP[model_lower],
+    }

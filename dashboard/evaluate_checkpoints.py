@@ -1166,7 +1166,8 @@ def main(args):
                 api_retries=1,  # Disable retries to surface errors immediately
             )
 
-            # Evaluate all checkpoints for this model
+            # Evaluate all checkpoints for this model (sorted by step number)
+            model_checkpoints.sort(key=lambda cp: cp.checkpoint_step)
             for checkpoint in tqdm(model_checkpoints, desc="Evaluating checkpoints", total=len(model_checkpoints)):
                 try:
                     result = asyncio.run(
