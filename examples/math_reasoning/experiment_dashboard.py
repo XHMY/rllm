@@ -1,238 +1,79 @@
-"""RLLM Experiment Dashboard — monitor, launch, and cancel training experiments."""
+"""RLLM Experiment Dashboard — monitor, launch, and cancel training experiments.
+
+Backend logic is shared with the FastAPI dashboard in dashboard/backend.py.
+This file imports from there and adds the Gradio UI layer.
+"""
 
 import argparse
-import json
-import os
-import random
 import re
-import subprocess
-import tempfile
-from pathlib import Path
 
 import gradio as gr
 import pandas as pd
 
-DEFAULT_CHECKPOINT_DIR = "checkpoints"
-DEFAULT_PROJECT = "rllm-workflow-MARL-v2"
-TOTAL_TRAINING_STEPS = 301
-LAUNCHER_SCRIPT = "examples/math_reasoning/launch_experiment.sh"
-SLURM_CONFIGS_DIR = Path("examples/math_reasoning/slurm_configs")
+from dashboard.backend import (
+    DEFAULT_CHECKPOINT_DIR,
+    DATASET_CATEGORIES,
+    MODEL_TABS,
+    POLICY_ABBREV,
+    STATUS_EMOJI,
+    TOTAL_TRAINING_STEPS,
+    assign_job_id,
+    cancel_job,
+    launch_experiment,
+    load_eval_results,
+    load_slurm_configs,
+    parse_slurm_config,
+    submit_eval_job,
+)
 
-MODEL_TABS = ["0.6B", "1.7B", "4B"]
-DATASET_CATEGORIES = {
-    "Math": ["math"],
-    "Code": ["deepcoder"],
-}
-STATUS_EMOJI = {"Finished": "✅", "Running": "🔄", "Unfinished": "⏸️"}
-POLICY_ABBREV = {
-    "share_policy": "share",
-    "multi_lora": "multi",
-}
-
-
-# ── SLURM config loading ───────────────────────────────────────────────────
+# ── Gradio-specific helpers that need pandas DataFrames ──────────────────────
 
 
-def load_slurm_configs() -> list[str]:
-    """Return sorted config names (filenames without .conf extension)."""
-    if not SLURM_CONFIGS_DIR.is_dir():
-        return []
-    return sorted(p.stem for p in SLURM_CONFIGS_DIR.glob("*.conf"))
-
-
-def parse_slurm_config(config_name: str) -> dict:
-    """Extract gpu_count and gpu_type from a config file."""
-    config_path = SLURM_CONFIGS_DIR / f"{config_name}.conf"
-    result = {"gpu_count": None, "gpu_type": None}
-    if not config_path.exists():
-        return result
-    text = config_path.read_text()
-    m = re.search(r"#SBATCH\s+--gres=gpu:(\d+)", text)
-    if m:
-        result["gpu_count"] = int(m.group(1))
-    m = re.search(r"^#\s*META:\s*GPU_TYPE=(\S+)", text, re.MULTILINE)
-    if m:
-        result["gpu_type"] = m.group(1)
-    return result
-
-
-# ── Eval results loading ──────────────────────────────────────────────────
-
-
-def load_eval_results(
-    experiment_name: str, checkpoint_dir: str, project: str = DEFAULT_PROJECT
-) -> list[dict]:
-    """Load eval results from per-experiment JSONL file, deduplicated.
-
-    Source: {checkpoint_dir}/{project}/{experiment_name}/eval_results.jsonl
-
-    Dedup key: (checkpoint_step, dataset, eval_mode, n_rollouts)
-    """
-    results: dict[tuple, dict] = {}
-
-    # Per-experiment eval results
-    per_exp_path = Path(checkpoint_dir) / project / experiment_name / "eval_results.jsonl"
-    if per_exp_path.exists():
-        try:
-            for line in per_exp_path.read_text().splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    key = (
-                        rec.get("checkpoint_step"),
-                        rec.get("dataset"),
-                        rec.get("eval_mode"),
-                        rec.get("n_rollouts"),
-                    )
-                    results[key] = rec
-                except json.JSONDecodeError:
-                    continue
-        except OSError:
-            pass
-
-    return list(results.values())
-
-
-# ── Checkpoint scanning ─────────────────────────────────────────────────────
-
-
-def parse_experiment_name(name: str) -> dict:
-    """Parse experiment directory name into components.
-
-    Expected format: {workflow}-qwen3_{model}-{policy}-{dataset}
-    Examples:
-        evaluator_optimizer-qwen3_1.7b-multi_lora-math
-        voting-qwen3_1.7b-share_policy-math
-        single_agent-qwen3_1.7b-deepcoder
-    """
-    # Try standard format: workflow-qwen3_MODEL-POLICY-DATASET
-    m = re.match(
-        r"^(.+?)-qwen3_([\d.]+[bB])-(.+?)-(\w+)$", name
-    )
-    if m:
-        return {
-            "workflow": m.group(1),
-            "model": m.group(2),
-            "policy": m.group(3),
-            "dataset": m.group(4),
-        }
-    # Fallback: workflow-qwen3_MODEL-DATASET (no policy field)
-    m = re.match(r"^(.+?)-qwen3_([\d.]+[bB])-(\w+)$", name)
-    if m:
-        return {
-            "workflow": m.group(1),
-            "model": m.group(2),
-            "policy": "—",
-            "dataset": m.group(3),
-        }
-    return {"workflow": name, "model": "—", "policy": "—", "dataset": "—"}
-
-
-def scan_checkpoints(checkpoint_dir: str, project: str = DEFAULT_PROJECT) -> list[dict]:
-    """Scan checkpoint directories and return experiment metadata."""
-    project_dir = Path(checkpoint_dir) / project
-    if not project_dir.is_dir():
-        return []
-
-    experiments = []
-    for entry in sorted(project_dir.iterdir()):
-        if not entry.is_dir() or entry.is_symlink():
-            continue
-
-        name = entry.name
-        parsed = parse_experiment_name(name)
-
-        # Read current step
-        iter_file = entry / "latest_checkpointed_iteration.txt"
-        steps = 0
-        if iter_file.exists():
-            try:
-                steps = int(iter_file.read_text().strip())
-            except (ValueError, OSError):
-                pass
-
-        # Read metadata
-        meta_file = entry / "training_metadata.json"
-        meta = {}
-        if meta_file.exists():
-            try:
-                meta = json.loads(meta_file.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        total = meta.get("total_training_steps", TOTAL_TRAINING_STEPS)
-
-        # Load eval results and compute best accuracy per dataset
-        eval_results = load_eval_results(name, checkpoint_dir, project)
-        eval_best: dict[str, float] = {}
-        for rec in eval_results:
-            ds = rec.get("dataset", "")
-            acc = rec.get("accuracy")
-            if ds and acc is not None:
-                if ds not in eval_best or acc > eval_best[ds]:
-                    eval_best[ds] = acc
-
-        experiments.append(
-            {
-                "Experiment": name,
-                "Workflow": parsed["workflow"],
-                "Model": parsed["model"],
-                "Policy": parsed["policy"],
-                "Dataset": parsed["dataset"],
-                "Steps": f"{steps}/{total}",
-                "_steps": steps,
-                "_total": total,
-                "_eval_best": eval_best,
-                "Status": "",  # computed later in build_experiment_table
-                "WandB Run": meta.get("wandb_run_id", "—"),
-                "SLURM Job": meta.get("slurm_job_id") or "—",
-            }
-        )
-    return experiments
-
-
-# ── SLURM helpers ────────────────────────────────────────────────────────────
-
-
-def get_slurm_jobs() -> pd.DataFrame:
-    """Get current user's SLURM jobs."""
-    fmt = "%.18i %.9P %.80j %.8T %.10M %.6D %R"
-    try:
-        result = subprocess.run(
-            ["squeue", "-u", os.environ.get("USER", ""), "-o", fmt, "--noheader"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return pd.DataFrame(
-                columns=["Job ID", "Partition", "Name", "State", "Time", "Nodes", "Nodelist"]
-            )
-        rows = []
-        for line in result.stdout.strip().splitlines():
-            parts = line.split(None, 6)
-            if len(parts) >= 6:
-                rows.append(
-                    {
-                        "Job ID": parts[0],
-                        "Partition": parts[1],
-                        "Name": parts[2],
-                        "State": parts[3],
-                        "Time": parts[4],
-                        "Nodes": parts[5],
-                        "Nodelist": parts[6] if len(parts) > 6 else "—",
-                    }
-                )
-        return pd.DataFrame(rows)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+def _get_slurm_jobs_df() -> pd.DataFrame:
+    """Get SLURM jobs as a pandas DataFrame (Gradio needs this format)."""
+    from dashboard.backend import get_slurm_jobs
+    jobs = get_slurm_jobs()
+    if not jobs:
         return pd.DataFrame(
             columns=["Job ID", "Partition", "Name", "State", "Time", "Nodes", "Nodelist"]
         )
+    return pd.DataFrame([{
+        "Job ID": j["job_id"],
+        "Partition": j["partition"],
+        "Name": j["name"],
+        "State": j["state"],
+        "Time": j["time"],
+        "Nodes": j["nodes"],
+        "Nodelist": j["nodelist"],
+    } for j in jobs])
 
 
-# ── Build combined table ─────────────────────────────────────────────────────
+def _scan_checkpoints_df(checkpoint_dir: str) -> pd.DataFrame:
+    """Scan checkpoints and return as a pandas DataFrame (Gradio format)."""
+    from dashboard.backend import scan_checkpoints
+    exps = scan_checkpoints(checkpoint_dir)
+    if not exps:
+        return pd.DataFrame(
+            columns=["Experiment", "Workflow", "Model", "Policy", "Dataset",
+                     "Steps", "Status", "WandB Run", "SLURM Job"]
+        )
+    rows = []
+    for e in exps:
+        rows.append({
+            "Experiment": e["name"],
+            "Workflow": e["workflow"],
+            "Model": e["model"],
+            "Policy": e["policy"],
+            "Dataset": e["dataset"],
+            "Steps": f"{e['steps']}/{e['total_steps']}",
+            "_steps": e["steps"],
+            "_total": e["total_steps"],
+            "_eval_best": e.get("eval_best", {}),
+            "Status": "",
+            "WandB Run": e.get("wandb_run", "\u2014"),
+            "SLURM Job": e.get("slurm_job", "\u2014"),
+        })
+    return pd.DataFrame(rows)
 
 
 MERGED_COLUMNS = [
@@ -243,21 +84,11 @@ MERGED_COLUMNS = [
 
 
 def build_experiment_table(checkpoint_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (merged_df, slurm_df).
+    """Return (merged_df, slurm_df) for the Gradio UI."""
+    exp_df = _scan_checkpoints_df(checkpoint_dir)
+    slurm_df = _get_slurm_jobs_df()
 
-    merged_df: one row per experiment with SLURM status columns joined in.
-    slurm_df: raw squeue output (kept for orphan-job visibility).
-    """
-    exps = scan_checkpoints(checkpoint_dir)
-    exp_df = pd.DataFrame(exps) if exps else pd.DataFrame(
-        columns=["Experiment", "Workflow", "Model", "Policy", "Dataset",
-                 "Steps", "Status", "WandB Run", "SLURM Job"]
-    )
-    slurm_df = get_slurm_jobs()
-
-    # Build a lookup: job_id -> {State, Time, Nodelist}
     slurm_lookup: dict[str, dict] = {}
-    # Build eval SLURM lookup: experiment_name -> job_id for eval jobs
     eval_slurm_lookup: dict[str, str] = {}
     if not slurm_df.empty:
         for _, row in slurm_df.iterrows():
@@ -266,24 +97,21 @@ def build_experiment_table(checkpoint_dir: str) -> tuple[pd.DataFrame, pd.DataFr
                 "Time": row["Time"],
                 "Node": row["Nodelist"],
             }
-            # Detect eval jobs by name prefix "eval-"
             job_name = str(row.get("Name", ""))
             if job_name.startswith("eval-"):
                 eval_exp_name = job_name[len("eval-"):]
                 eval_slurm_lookup[eval_exp_name] = str(row["Job ID"]).strip()
 
-    # Enrich experiment rows with SLURM info and compute precise status
     slurm_states, times, nodes, statuses = [], [], [], []
     eval_statuses, eval_jobs = [], []
     for _, row in exp_df.iterrows():
-        job_id = str(row.get("SLURM Job", "—")).strip()
+        job_id = str(row.get("SLURM Job", "\u2014")).strip()
         info = slurm_lookup.get(job_id, {})
         slurm_state = info.get("SLURM State", "")
-        slurm_states.append(slurm_state or "—")
-        times.append(info.get("Time", "—"))
-        nodes.append(info.get("Node", "—"))
+        slurm_states.append(slurm_state or "\u2014")
+        times.append(info.get("Time", "\u2014"))
+        nodes.append(info.get("Node", "\u2014"))
 
-        # Determine status: finished / running / unfinished
         steps = row.get("_steps", 0)
         total = row.get("_total", TOTAL_TRAINING_STEPS)
         if steps >= total:
@@ -293,12 +121,11 @@ def build_experiment_table(checkpoint_dir: str) -> tuple[pd.DataFrame, pd.DataFr
         else:
             statuses.append("Unfinished")
 
-        # Eval status
         exp_name = row.get("Experiment", "")
         eval_best = row.get("_eval_best", {})
         has_eval = bool(eval_best)
         is_evaluating = exp_name in eval_slurm_lookup
-        eval_job_id = eval_slurm_lookup.get(exp_name, "—")
+        eval_job_id = eval_slurm_lookup.get(exp_name, "\u2014")
         eval_jobs.append(eval_job_id)
 
         if is_evaluating and has_eval:
@@ -317,25 +144,22 @@ def build_experiment_table(checkpoint_dir: str) -> tuple[pd.DataFrame, pd.DataFr
     exp_df["Eval Status"] = eval_statuses
     exp_df["Eval Job"] = eval_jobs
 
-    # Drop temporary columns but keep _eval_best for downstream use
     exp_df = exp_df.drop(columns=["_steps", "_total"], errors="ignore")
-    # Ensure all MERGED_COLUMNS exist
     for col in MERGED_COLUMNS:
         if col not in exp_df.columns:
-            exp_df[col] = "—"
+            exp_df[col] = "\u2014"
     merged_df = exp_df
 
     return merged_df, slurm_df
 
 
 # ── Pivot grid + detail helpers ──────────────────────────────────────────────
-
 STATUS_BAR_COLORS = {"Finished": "#4caf50", "Running": "#2196f3", "Unfinished": "#ff9800"}
 
 
 def _progress_bar_html(steps_str: str, status: str, label: str) -> str:
     """Return HTML for a single experiment line with emoji, label, and progress bar."""
-    emoji = STATUS_EMOJI.get(status, "⏸️")
+    emoji = STATUS_EMOJI.get(status, "\u23f8\ufe0f")
     color = STATUS_BAR_COLORS.get(status, "#ff9800")
     # Parse "150/301" into percentage
     parts = steps_str.split("/")
@@ -366,9 +190,9 @@ def _eval_indicator_html(eval_status: str, eval_best: dict | None) -> str:
             parts.append(f"{ds}: {acc:.1%}")
     indicator = " | ".join(parts) if parts else ""
     if "Evaluating" in eval_status:
-        indicator = ("🔄 " + indicator) if indicator else "🔄 evaluating"
+        indicator = ("\ud83d\udd04 " + indicator) if indicator else "\ud83d\udd04 evaluating"
     if indicator:
-        return f'<div style="font-size:0.8em;color:#666;margin-top:1px">📊 {indicator}</div>'
+        return f'<div style="font-size:0.8em;color:#666;margin-top:1px">\ud83d\udcca {indicator}</div>'
     return ""
 
 
@@ -413,7 +237,7 @@ def build_pivot_grid(
         for c_idx, wf in enumerate(workflows):
             cell_exps = subset[(subset["Policy"] == policy) & (subset["Workflow"] == wf)]
             if cell_exps.empty:
-                row_dict[wf] = "—"
+                row_dict[wf] = "\u2014"
             else:
                 html_parts = []
                 exp_names_in_cell = []
@@ -447,7 +271,7 @@ def format_detail_md(
     if match.empty:
         return f"Experiment **{exp_name}** not found."
     row = match.iloc[0]
-    emoji = STATUS_EMOJI.get(row["Status"], "⏸️")
+    emoji = STATUS_EMOJI.get(row["Status"], "\u23f8\ufe0f")
     lines = [
         f"### {exp_name}",
         "",
@@ -459,7 +283,7 @@ def format_detail_md(
         f"| Policy | {row['Policy']} |",
         f"| Dataset | {row['Dataset']} |",
         f"| Eval Status | {row.get('Eval Status', '')} |",
-        f"| Eval Job | {row.get('Eval Job', '—')} |",
+        f"| Eval Job | {row.get('Eval Job', chr(8212))} |",
         f"| WandB Run | {row['WandB Run']} |",
         f"| SLURM Job | {row['SLURM Job']} |",
         f"| SLURM State | {row['SLURM State']} |",
@@ -504,7 +328,7 @@ def format_eval_results_md(exp_name: str, checkpoint_dir: str) -> str:
         cells = []
         for ds in datasets:
             acc = step_data[(step, mode, n_roll)].get(ds)
-            cells.append(f"{acc:.1%}" if acc is not None else "—")
+            cells.append(f"{acc:.1%}" if acc is not None else "\u2014")
         rows.append(f"| {step} | {mode} | {n_roll} | " + " | ".join(cells) + " |")
 
     # Best per dataset
@@ -535,180 +359,6 @@ def format_eval_results_md(exp_name: str, checkpoint_dir: str) -> str:
     return "\n".join(lines)
 
 
-# ── Assign SLURM Job ID ─────────────────────────────────────────────────────
-
-
-def assign_job_id(experiment_name: str, job_id: str, checkpoint_dir: str) -> str:
-    """Write slurm_job_id into an experiment's training_metadata.json."""
-    if not experiment_name or not experiment_name.strip():
-        return "Please select an experiment."
-    if not job_id or not job_id.strip():
-        return "Please enter a Job ID."
-    job_id = job_id.strip()
-    if not re.match(r"^\d+$", job_id):
-        return f"Invalid Job ID: {job_id!r} (expected numeric)"
-
-    meta_path = (
-        Path(checkpoint_dir) / DEFAULT_PROJECT / experiment_name.strip() / "training_metadata.json"
-    )
-    if not meta_path.exists():
-        return f"Metadata file not found: {meta_path}"
-
-    try:
-        meta = json.loads(meta_path.read_text())
-    except (json.JSONDecodeError, OSError) as e:
-        return f"Failed to read metadata: {e}"
-
-    meta["slurm_job_id"] = job_id
-    meta_path.write_text(json.dumps(meta, indent=2))
-    return f"Assigned SLURM job {job_id} to {experiment_name}"
-
-
-# ── Submit eval job ──────────────────────────────────────────────────────────
-
-
-def submit_eval_job(
-    experiment_name: str,
-    dataset: str,
-    n_rollouts: int,
-    partition: str,
-    constraint: str,
-    checkpoint_dir: str,
-    project: str = DEFAULT_PROJECT,
-    dry_run: bool = False,
-) -> str:
-    """Generate and submit an sbatch evaluation job."""
-    if not experiment_name or not experiment_name.strip():
-        return "Please select an experiment first."
-
-    experiment_name = experiment_name.strip()
-    checkpoints_dir = f"{checkpoint_dir}/{project}"
-    output_json = f"{checkpoint_dir}/{project}/{experiment_name}/eval_results.jsonl"
-    port = random.randint(8000, 9999)
-
-    script = f"""#!/bin/bash
-#SBATCH --job-name=eval-{experiment_name}
-#SBATCH --output=logs/eval_%x_%j.out
-#SBATCH --error=logs/eval_%x_%j.err
-#SBATCH --partition={partition}
-#SBATCH --nodes=1
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-gpu=4
-#SBATCH --exclude=dgxh-1
-#SBATCH --mem-per-gpu=80G
-#SBATCH --constraint={constraint}
-#SBATCH --time=1-0:00:00
-
-unset ROCR_VISIBLE_DEVICES
-unset HIP_VISIBLE_DEVICES
-source ~/.bashrc && conda activate rllm
-
-export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
-
-python -m examples.math_reasoning.evaluate_checkpoints \\
-    --eval-mode trained_checkpoint \\
-    --checkpoints-dir {checkpoints_dir} \\
-    --dataset {dataset} \\
-    --experiment-filter '^{experiment_name}$' \\
-    --n-rollouts {n_rollouts} \\
-    --n-parallel 512 \\
-    --port {port} \\
-    --output-json {output_json}
-"""
-
-    if dry_run:
-        return f"=== DRY RUN — sbatch script for {experiment_name} (port {port}) ===\n{script}"
-
-    # Ensure logs directory exists
-    os.makedirs("logs", exist_ok=True)
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".sh", prefix="eval_sbatch_", delete=False
-        ) as f:
-            f.write(script)
-            tmp_path = f.name
-
-        result = subprocess.run(
-            ["sbatch", tmp_path], capture_output=True, text=True, timeout=15
-        )
-        os.unlink(tmp_path)
-
-        if result.returncode == 0:
-            job_id_match = re.search(r"\d+", result.stdout)
-            job_id = job_id_match.group() if job_id_match else "?"
-            return (
-                f"Submitted eval job for {experiment_name}\n"
-                f"Job ID: {job_id} | Dataset: {dataset} | N-rollouts: {n_rollouts}\n"
-                f"Output: {output_json}"
-            )
-        return f"sbatch failed (rc={result.returncode}):\n{result.stderr}"
-    except FileNotFoundError:
-        return "sbatch not found — is SLURM available?"
-    except subprocess.TimeoutExpired:
-        return "ERROR: sbatch timed out"
-    except Exception as e:
-        return f"ERROR: {e}"
-
-
-# ── Launch / cancel ──────────────────────────────────────────────────────────
-
-
-def launch_experiment(
-    workflow: str,
-    model: str,
-    share_policy: str,
-    node: str,
-    extra_args: str,
-    dry_run: bool,
-) -> str:
-    """Call launch_experiment.sh and return its output."""
-    config_path = SLURM_CONFIGS_DIR / f"{node}.conf"
-    cmd = [
-        "bash",
-        LAUNCHER_SCRIPT,
-        "--workflow", workflow,
-        "--model", model,
-        "--share-policy", share_policy,
-        "--slurm-config", str(config_path),
-    ]
-    if extra_args.strip():
-        cmd += ["--extra-args", extra_args.strip()]
-    if dry_run:
-        cmd.append("--dry-run")
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        output = result.stdout
-        if result.stderr:
-            output += "\n--- stderr ---\n" + result.stderr
-        return output if output.strip() else "(no output)"
-    except subprocess.TimeoutExpired:
-        return "ERROR: launch timed out after 30s"
-    except Exception as e:
-        return f"ERROR: {e}"
-
-
-def cancel_job(job_id: str) -> str:
-    """Cancel a SLURM job via scancel."""
-    job_id = job_id.strip()
-    if not job_id:
-        return "Please enter a Job ID."
-    if not re.match(r"^\d+$", job_id):
-        return f"Invalid Job ID: {job_id!r} (expected numeric)"
-    try:
-        result = subprocess.run(
-            ["scancel", job_id], capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0:
-            return f"Cancelled job {job_id}."
-        return f"scancel failed (rc={result.returncode}): {result.stderr}"
-    except FileNotFoundError:
-        return "scancel not found — is SLURM available?"
-    except Exception as e:
-        return f"ERROR: {e}"
-
-
 # ── Gradio app ───────────────────────────────────────────────────────────────
 
 
@@ -727,7 +377,7 @@ def main():
         for ds_key, ds_names in DATASET_CATEGORIES.items():
             for model in MODEL_TABS:
                 pivot, lookup, n_exp = build_pivot_grid(merged_df, model.lower(), ds_names)
-                label = f"{ds_key} — {model} ({n_exp} experiment{'s' if n_exp != 1 else ''})"
+                label = f"{ds_key} \u2014 {model} ({n_exp} experiment{'s' if n_exp != 1 else ''})"
                 results.append(gr.update(value=pivot, label=label))
                 results.append(lookup)
         return (
@@ -752,8 +402,8 @@ def main():
         match = full_data[full_data["Experiment"] == exp_name]
         existing_job = ""
         if not match.empty:
-            val = match.iloc[0].get("SLURM Job", "—")
-            if val and val != "—":
+            val = match.iloc[0].get("SLURM Job", "\u2014")
+            if val and val != "\u2014":
                 existing_job = str(val)
         return gr.update(visible=True), detail, exp_name, existing_job, eval_md, ""
 
@@ -768,7 +418,7 @@ def main():
         if match.empty:
             return "Experiment not found."
         job_id = str(match.iloc[0].get("SLURM Job", ""))
-        if not job_id or job_id == "—":
+        if not job_id or job_id == "\u2014":
             return "No SLURM Job ID assigned to this experiment."
         return cancel_job(job_id)
 
@@ -804,7 +454,7 @@ def main():
             gr.Markdown("# RLLM Experiment Dashboard")
             refresh_btn = gr.Button("Refresh", scale=0)
 
-        # ── Nested tabs: Dataset (outer) → Model (inner) ────────────────
+        # ── Nested tabs: Dataset (outer) > Model (inner) ────────────────
         with gr.Tabs():
             for ds_key in DATASET_CATEGORIES:
                 with gr.TabItem(ds_key):
@@ -813,7 +463,7 @@ def main():
                             with gr.TabItem(model):
                                 key = f"{ds_key}_{model}"
                                 grids[key] = gr.Dataframe(
-                                    label=f"{ds_key} — {model} Experiments",
+                                    label=f"{ds_key} \u2014 {model} Experiments",
                                     interactive=False,
                                     wrap=True,
                                     datatype="html",
@@ -954,7 +604,7 @@ def main():
                     outputs=cell_select_outputs,
                 )
 
-        # Assign job ID → refresh
+        # Assign job ID -> refresh
         assign_btn.click(
             fn=do_assign,
             inputs=[selected_exp_state, assign_job_box],

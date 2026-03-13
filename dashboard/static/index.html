@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RLLM Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <h1>RLLM Dashboard</h1>
+  <div class="header-actions">
+    <label class="toggle-label">
+      <input type="checkbox" id="auto-refresh" checked>
+      Auto-refresh
+    </label>
+    <button id="refresh-btn" class="btn btn-primary">Refresh</button>
+  </div>
+</header>
+
+<!-- Tab Navigation -->
+<div class="tab-nav">
+  <div class="tab-row">
+    <div id="dataset-tabs" class="tab-bar"></div>
+    <div class="tab-spacer"></div>
+    <div class="filter-group">
+      <span class="filter-label">Status:</span>
+      <div class="btn-group">
+        <button class="filter-btn active" data-filter="status" data-value="All">All</button>
+        <button class="filter-btn" data-filter="status" data-value="Running">Running</button>
+        <button class="filter-btn" data-filter="status" data-value="Finished">Finished</button>
+        <button class="filter-btn" data-filter="status" data-value="Unfinished">Unfinished</button>
+      </div>
+    </div>
+  </div>
+  <div class="tab-row">
+    <div id="model-tabs" class="tab-bar"></div>
+  </div>
+</div>
+
+<!-- Pivot Grid -->
+<div class="table-container">
+  <div id="pivot-grid"></div>
+  <div id="empty-state" class="empty-state" style="display:none">
+    No experiments found. Check your checkpoint directory.
+  </div>
+</div>
+
+<!-- Inline Detail Panel -->
+<div id="detail-panel" class="detail-panel" style="display:none">
+  <div class="detail-panel-header">
+    <h2 id="panel-title">Experiment Detail</h2>
+    <button id="panel-close" class="btn-icon">&times;</button>
+  </div>
+  <div class="detail-panel-body">
+    <div class="detail-columns">
+      <!-- Left column: metadata + progress + actions -->
+      <div class="detail-left">
+        <div id="panel-meta" class="meta-grid"></div>
+
+        <div class="panel-section">
+          <h3>Progress</h3>
+          <div id="panel-progress-wrap" class="progress-bar-large-wrap">
+            <div id="panel-progress-bar" class="progress-bar-large"></div>
+            <span id="panel-progress-text" class="progress-text"></span>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Actions</h3>
+          <div class="action-row">
+            <input type="text" id="assign-job-input" placeholder="SLURM Job ID" class="input-sm">
+            <button id="assign-job-btn" class="btn btn-sm">Assign</button>
+          </div>
+          <div class="action-row">
+            <button id="cancel-job-btn" class="btn btn-sm btn-danger">Cancel Job</button>
+          </div>
+          <div class="action-row">
+            <select id="eval-dataset" class="input-sm">
+              <option value="dapo_math">dapo_math</option>
+              <option value="aime2025">aime2025</option>
+            </select>
+            <select id="eval-nrollouts" class="input-sm">
+              <option value="1">1 rollout</option>
+              <option value="3">3 rollouts</option>
+              <option value="5">5 rollouts</option>
+            </select>
+            <select id="eval-partition" class="input-sm">
+              <option value="preempt">preempt</option>
+              <option value="dgxh">dgxh</option>
+            </select>
+            <select id="eval-constraint" class="input-sm">
+              <option value="l40s">l40s</option>
+              <option value="a40">a40</option>
+            </select>
+          </div>
+          <div class="action-row">
+            <button id="eval-submit-btn" class="btn btn-sm btn-primary">Submit Eval</button>
+            <button id="eval-dryrun-btn" class="btn btn-sm">Eval Dry Run</button>
+          </div>
+          <pre id="action-output" class="action-output"></pre>
+        </div>
+      </div>
+
+      <!-- Right column: eval cards -->
+      <div class="detail-right">
+        <div class="panel-section">
+          <h3>Evaluation Results</h3>
+          <div id="panel-eval"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Collapsible sections -->
+<details class="section-details">
+  <summary>Launch Experiment</summary>
+  <div class="launch-form">
+    <div class="form-row">
+      <label>Workflow
+        <select id="launch-workflow">
+          <option value="evaluator_optimizer">evaluator_optimizer</option>
+          <option value="voting">voting</option>
+          <option value="orchestrator_workers">orchestrator_workers</option>
+        </select>
+      </label>
+      <label>Model
+        <select id="launch-model">
+          <option value="0.6B">0.6B</option>
+          <option value="1.7B" selected>1.7B</option>
+          <option value="4B">4B</option>
+        </select>
+      </label>
+      <label>Share Policy
+        <select id="launch-policy">
+          <option value="false">false</option>
+          <option value="true">true</option>
+        </select>
+      </label>
+      <label>SLURM Config
+        <select id="launch-node"></select>
+      </label>
+    </div>
+    <div id="launch-gpu-info" class="gpu-info"></div>
+    <label>Extra Args (hydra overrides)
+      <input type="text" id="launch-extra" placeholder="e.g. trainer.total_training_steps=100" class="input-full">
+    </label>
+    <div class="form-row">
+      <button id="launch-btn" class="btn btn-primary">Launch</button>
+      <button id="launch-dryrun-btn" class="btn">Dry Run</button>
+    </div>
+    <pre id="launch-output" class="action-output"></pre>
+  </div>
+</details>
+
+<details class="section-details">
+  <summary>SLURM Queue</summary>
+  <table id="slurm-table">
+    <thead>
+      <tr>
+        <th>Job ID</th>
+        <th>Partition</th>
+        <th>Name</th>
+        <th>State</th>
+        <th>Time</th>
+        <th>Nodes</th>
+        <th>Nodelist</th>
+      </tr>
+    </thead>
+    <tbody id="slurm-tbody"></tbody>
+  </table>
+</details>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
