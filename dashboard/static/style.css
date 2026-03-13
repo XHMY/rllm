@@ -74,6 +74,16 @@ body {
   cursor: pointer;
 }
 
+.toggle-label-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 /* ── Buttons ──────────────────────────────────────────────────────────── */
 
 .btn {
@@ -333,6 +343,17 @@ body {
 .badge-finished { background: var(--green-bg); color: var(--green); }
 .badge-running  { background: var(--blue-bg);  color: var(--blue); }
 .badge-unfinished { background: var(--amber-bg); color: var(--amber); }
+
+.gpu-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--border);
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
 
 /* ── Inline progress bar ──────────────────────────────────────────────── */
 

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from dashboard.backend import (
     DEFAULT_CHECKPOINT_DIR,
     DATASET_CATEGORIES,
+    EVAL_DATASETS,
     MODEL_TABS,
     assign_job_id,
     build_experiment_table,
@@ -50,15 +51,22 @@ class LaunchRequest(BaseModel):
     node: str
     extra_args: str = ""
     dry_run: bool = False
+    task_type: str = "math"
+    n_gpus: int = 2
+    cpus_per_gpu: int = 4
+    mem_per_gpu: str = "48G"
 
 
 class EvalSubmitRequest(BaseModel):
     experiment_name: str
     dataset: str
     n_rollouts: int = 1
-    partition: str = "preempt"
-    constraint: str = "l40s"
+    slurm_config: str = "preempt_l40s"
+    cpus_per_gpu: int = 4
+    mem_per_gpu: str = "80G"
     dry_run: bool = False
+    task_type: str = "math"
+    trajectory_analysis: bool = False
 
 
 # ── API endpoints ────────────────────────────────────────────────────────────
@@ -74,6 +82,7 @@ def api_experiments():
         "metadata": {
             "dataset_categories": DATASET_CATEGORIES,
             "model_tabs": MODEL_TABS,
+            "eval_datasets": EVAL_DATASETS,
         },
     }
 
@@ -117,6 +126,10 @@ def api_launch(req: LaunchRequest):
     output = launch_experiment(
         req.workflow, req.model, req.share_policy,
         req.node, req.extra_args, req.dry_run,
+        task_type=req.task_type,
+        n_gpus=req.n_gpus,
+        cpus_per_gpu=req.cpus_per_gpu,
+        mem_per_gpu=req.mem_per_gpu,
     )
     return {"output": output}
 
@@ -127,10 +140,13 @@ def api_eval_submit(req: EvalSubmitRequest):
         experiment_name=req.experiment_name,
         dataset=req.dataset,
         n_rollouts=req.n_rollouts,
-        partition=req.partition,
-        constraint=req.constraint,
+        slurm_config=req.slurm_config,
+        cpus_per_gpu=req.cpus_per_gpu,
+        mem_per_gpu=req.mem_per_gpu,
         checkpoint_dir=_checkpoint_dir,
         dry_run=req.dry_run,
+        task_type=req.task_type,
+        trajectory_analysis=req.trajectory_analysis,
     )
     return {"output": output}
 

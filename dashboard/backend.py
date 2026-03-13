@@ -10,11 +10,13 @@ from pathlib import Path
 
 import pandas as pd
 
+from dashboard.task_configs import EVAL_DATASETS, infer_task_type
+
 DEFAULT_CHECKPOINT_DIR = "checkpoints"
 DEFAULT_PROJECT = "rllm-workflow-MARL-v2"
 TOTAL_TRAINING_STEPS = 301
-LAUNCHER_SCRIPT = "examples/math_reasoning/launch_experiment.sh"
-SLURM_CONFIGS_DIR = Path("examples/math_reasoning/slurm_configs")
+LAUNCHER_SCRIPT = "dashboard/launch_experiment.sh"
+SLURM_CONFIGS_DIR = Path("dashboard/slurm_configs")
 
 MODEL_TABS = ["0.6B", "1.7B", "4B"]
 DATASET_CATEGORIES = {
@@ -39,15 +41,12 @@ def load_slurm_configs() -> list[str]:
 
 
 def parse_slurm_config(config_name: str) -> dict:
-    """Extract gpu_count and gpu_type from a config file."""
+    """Extract gpu_type from a config file's META line."""
     config_path = SLURM_CONFIGS_DIR / f"{config_name}.conf"
-    result = {"gpu_count": None, "gpu_type": None}
+    result = {"gpu_type": None}
     if not config_path.exists():
         return result
     text = config_path.read_text()
-    m = re.search(r"#SBATCH\s+--gres=gpu:(\d+)", text)
-    if m:
-        result["gpu_count"] = int(m.group(1))
     m = re.search(r"^#\s*META:\s*GPU_TYPE=(\S+)", text, re.MULTILINE)
     if m:
         result["gpu_type"] = m.group(1)
@@ -125,6 +124,19 @@ def parse_experiment_name(name: str) -> dict:
     return {"workflow": name, "model": "\u2014", "policy": "\u2014", "dataset": "\u2014"}
 
 
+def infer_gpu_count(exp_dir: Path) -> int | None:
+    """Infer GPU count from checkpoint file naming: model_world_size_N_rank_0.pt."""
+    for step_dir in exp_dir.glob("global_step_*"):
+        actor_dir = step_dir / "actor"
+        if not actor_dir.is_dir():
+            continue
+        for f in actor_dir.iterdir():
+            m = re.match(r"model_world_size_(\d+)_rank_0\.pt", f.name)
+            if m:
+                return int(m.group(1))
+    return None
+
+
 def scan_checkpoints(checkpoint_dir: str, project: str = DEFAULT_PROJECT) -> list[dict]:
     """Scan checkpoint directories and return experiment metadata."""
     project_dir = Path(checkpoint_dir) / project
@@ -159,6 +171,9 @@ def scan_checkpoints(checkpoint_dir: str, project: str = DEFAULT_PROJECT) -> lis
 
         total = meta.get("total_training_steps", TOTAL_TRAINING_STEPS)
 
+        # Infer GPU count from checkpoint files
+        gpu_count = infer_gpu_count(entry)
+
         # Load eval results and compute best accuracy per dataset
         eval_results = load_eval_results(name, checkpoint_dir, project)
         eval_best: dict[str, float] = {}
@@ -178,6 +193,7 @@ def scan_checkpoints(checkpoint_dir: str, project: str = DEFAULT_PROJECT) -> lis
                 "dataset": parsed["dataset"],
                 "steps": steps,
                 "total_steps": total,
+                "gpu_count": gpu_count,
                 "eval_best": eval_best,
                 "status": "",  # computed later in build_experiment_table
                 "wandb_run": meta.get("wandb_run_id", "\u2014"),
@@ -372,11 +388,14 @@ def submit_eval_job(
     experiment_name: str,
     dataset: str,
     n_rollouts: int,
-    partition: str,
-    constraint: str,
+    slurm_config: str,
+    cpus_per_gpu: int,
+    mem_per_gpu: str,
     checkpoint_dir: str,
     project: str = DEFAULT_PROJECT,
     dry_run: bool = False,
+    task_type: str = "math",
+    trajectory_analysis: bool = False,
 ) -> str:
     """Generate and submit an sbatch evaluation job."""
     if not experiment_name or not experiment_name.strip():
@@ -387,26 +406,47 @@ def submit_eval_job(
     output_json = f"{checkpoint_dir}/{project}/{experiment_name}/eval_results.jsonl"
     port = random.randint(8000, 9999)
 
+    # Read SBATCH directives from config file (excluding gpu/cpu/mem lines)
+    config_path = SLURM_CONFIGS_DIR / f"{slurm_config}.conf"
+    if not config_path.exists():
+        return f"SLURM config not found: {config_path}"
+    sbatch_lines = []
+    for line in config_path.read_text().splitlines():
+        if line.startswith("#SBATCH") and not re.search(
+            r"--(job-name|output|error|gres=gpu|cpus-per-gpu|mem-per-gpu)", line
+        ):
+            sbatch_lines.append(line)
+    sbatch_directives = "\n".join(sbatch_lines)
+
+    # Task-specific setup commands
+    extra_setup = ""
+    if task_type == "deepcoder":
+        extra_setup = "\nulimit -n 1048576\n"
+
+    # Trajectory analysis flags
+    trajectory_flags = ""
+    if trajectory_analysis:
+        traj_dir = f"{checkpoint_dir}/{project}/{experiment_name}"
+        trajectory_flags = f"""\\\n    --trajectory-output-dir {traj_dir} \\
+    --max-samples 30"""
+
     script = f"""#!/bin/bash
 #SBATCH --job-name=eval-{experiment_name}
 #SBATCH --output=logs/eval_%x_%j.out
 #SBATCH --error=logs/eval_%x_%j.err
-#SBATCH --partition={partition}
-#SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-gpu=4
-#SBATCH --exclude=dgxh-1
-#SBATCH --mem-per-gpu=80G
-#SBATCH --constraint={constraint}
-#SBATCH --time=1-0:00:00
+#SBATCH --cpus-per-gpu={cpus_per_gpu}
+#SBATCH --mem-per-gpu={mem_per_gpu}
+{sbatch_directives}
 
 unset ROCR_VISIBLE_DEVICES
 unset HIP_VISIBLE_DEVICES
 source ~/.bashrc && conda activate rllm
 
 export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
-
-python -m examples.math_reasoning.evaluate_checkpoints \\
+{extra_setup}
+python -m dashboard.evaluate_checkpoints \\
+    --task-type {task_type} \\
     --eval-mode trained_checkpoint \\
     --checkpoints-dir {checkpoints_dir} \\
     --dataset {dataset} \\
@@ -414,7 +454,7 @@ python -m examples.math_reasoning.evaluate_checkpoints \\
     --n-rollouts {n_rollouts} \\
     --n-parallel 512 \\
     --port {port} \\
-    --output-json {output_json}
+    --output-json {output_json} {trajectory_flags}
 """
 
     if dry_run:
@@ -461,6 +501,10 @@ def launch_experiment(
     node: str,
     extra_args: str,
     dry_run: bool,
+    task_type: str = "math",
+    n_gpus: int = 2,
+    cpus_per_gpu: int = 4,
+    mem_per_gpu: str = "48G",
 ) -> str:
     """Call launch_experiment.sh and return its output."""
     config_path = SLURM_CONFIGS_DIR / f"{node}.conf"
@@ -471,6 +515,10 @@ def launch_experiment(
         "--model", model,
         "--share-policy", share_policy,
         "--slurm-config", str(config_path),
+        "--task-type", task_type,
+        "--n-gpus", str(n_gpus),
+        "--cpus-per-gpu", str(cpus_per_gpu),
+        "--mem-per-gpu", mem_per_gpu,
     ]
     if extra_args.strip():
         cmd += ["--extra-args", extra_args.strip()]

@@ -40,6 +40,7 @@ async function loadExperiments() {
   state.slurmJobs = data.slurm_jobs || [];
   state.metadata = data.metadata || state.metadata;
   buildTabs();
+  populateEvalDatasets();
   renderPivotGrid();
   renderSlurmTable();
   // If detail panel is open, refresh its content
@@ -220,6 +221,7 @@ function renderPivotGrid() {
           html += `<span class="progress-label">${exp.steps}/${exp.total_steps}</span>`;
           html += `</div>`;
           html += `<span class="badge badge-${statusClass}">${esc(exp.status)}</span>`;
+          if (exp.gpu_count) html += `<span class="gpu-badge">${exp.gpu_count} GPU</span>`;
           html += '</div>';
           if (evalHtml) {
             html += `<div class="cell-eval">${evalHtml}</div>`;
@@ -281,6 +283,7 @@ async function loadExperimentDetail(name) {
     ['Policy', exp.policy],
     ['Model', exp.model],
     ['Dataset', exp.dataset],
+    ['GPUs', exp.gpu_count != null ? String(exp.gpu_count) : '—'],
     ['Status', exp.status],
     ['SLURM Job', exp.slurm_job],
     ['SLURM State', exp.slurm_state],
@@ -438,50 +441,65 @@ $('#eval-dryrun-btn').addEventListener('click', () => submitEval(true));
 
 async function submitEval(dryRun) {
   if (!state.selectedExperiment) return;
+  // Auto-infer task_type from selected dataset
+  const dataset = $('#eval-dataset').value;
+  const taskType = dataset === 'deepcoder' ? 'deepcoder' : 'math';
   const data = await api('POST', '/api/eval/submit', {
     experiment_name: state.selectedExperiment,
-    dataset: $('#eval-dataset').value,
+    dataset: dataset,
     n_rollouts: parseInt($('#eval-nrollouts').value),
-    partition: $('#eval-partition').value,
-    constraint: $('#eval-constraint').value,
+    slurm_config: $('#eval-slurm-config').value,
+    cpus_per_gpu: parseInt($('#eval-cpus-per-gpu').value),
+    mem_per_gpu: $('#eval-mem-per-gpu').value,
     dry_run: dryRun,
+    task_type: taskType,
+    trajectory_analysis: $('#eval-trajectory').checked,
   });
   showOutput(actionOutput, data.output);
   if (!dryRun) await loadExperiments();
+}
+
+// ── Eval dataset population ──────────────────────────────────────────────
+
+let evalDatasetsPopulated = false;
+
+function populateEvalDatasets() {
+  if (evalDatasetsPopulated) return;
+  const evalDatasets = state.metadata.eval_datasets;
+  if (!evalDatasets) return;
+
+  const select = $('#eval-dataset');
+  select.innerHTML = '';
+  for (const [category, datasets] of Object.entries(evalDatasets)) {
+    const group = document.createElement('optgroup');
+    group.label = category;
+    for (const ds of datasets) {
+      const opt = document.createElement('option');
+      opt.value = ds;
+      opt.textContent = ds;
+      group.appendChild(opt);
+    }
+    select.appendChild(group);
+  }
+  evalDatasetsPopulated = true;
 }
 
 // ── Launch form ──────────────────────────────────────────────────────────
 
 async function loadSlurmConfigs() {
   const data = await api('GET', '/api/slurm-configs');
-  const select = $('#launch-node');
-  select.innerHTML = '';
-  for (const c of (data.configs || [])) {
-    const opt = document.createElement('option');
-    opt.value = c.name;
-    let label = c.name;
-    if (c.gpu_count || c.gpu_type) {
-      const parts = [];
-      if (c.gpu_count) parts.push(`${c.gpu_count} GPU`);
-      if (c.gpu_type) parts.push(c.gpu_type);
-      label += ` (${parts.join(', ')})`;
+  const configs = data.configs || [];
+  // Populate both launch and eval SLURM config dropdowns
+  for (const sel of [$('#launch-node'), $('#eval-slurm-config')]) {
+    sel.innerHTML = '';
+    for (const c of configs) {
+      const opt = document.createElement('option');
+      opt.value = c.name;
+      opt.textContent = `${c.name} (${c.gpu_type || 'unknown'})`;
+      sel.appendChild(opt);
     }
-    opt.textContent = label;
-    select.appendChild(opt);
-  }
-  updateGpuInfo();
-}
-
-function updateGpuInfo() {
-  const select = $('#launch-node');
-  const opt = select.options[select.selectedIndex];
-  if (opt) {
-    const match = opt.textContent.match(/\((.+)\)/);
-    $('#launch-gpu-info').textContent = match ? match[1] : '';
   }
 }
-
-$('#launch-node').addEventListener('change', updateGpuInfo);
 
 $('#launch-btn').addEventListener('click', () => doLaunch(false));
 $('#launch-dryrun-btn').addEventListener('click', () => doLaunch(true));
@@ -494,6 +512,10 @@ async function doLaunch(dryRun) {
     node: $('#launch-node').value,
     extra_args: $('#launch-extra').value,
     dry_run: dryRun,
+    task_type: $('#launch-task-type').value,
+    n_gpus: parseInt($('#launch-n-gpus').value),
+    cpus_per_gpu: parseInt($('#launch-cpus-per-gpu').value),
+    mem_per_gpu: $('#launch-mem-per-gpu').value,
   });
   showOutput(launchOutput, data.output);
   if (!dryRun) await loadExperiments();

@@ -79,22 +79,19 @@
           </div>
           <div class="action-row">
             <select id="eval-dataset" class="input-sm">
-              <option value="dapo_math">dapo_math</option>
-              <option value="aime2025">aime2025</option>
             </select>
             <select id="eval-nrollouts" class="input-sm">
               <option value="1">1 rollout</option>
               <option value="3">3 rollouts</option>
               <option value="5">5 rollouts</option>
             </select>
-            <select id="eval-partition" class="input-sm">
-              <option value="preempt">preempt</option>
-              <option value="dgxh">dgxh</option>
-            </select>
-            <select id="eval-constraint" class="input-sm">
-              <option value="l40s">l40s</option>
-              <option value="a40">a40</option>
-            </select>
+            <select id="eval-slurm-config" class="input-sm"></select>
+            <input type="number" id="eval-cpus-per-gpu" min="1" max="32" value="4" class="input-sm" placeholder="CPUs/GPU">
+            <input type="text" id="eval-mem-per-gpu" value="80G" class="input-sm" placeholder="Mem/GPU">
+            <label class="toggle-label-sm">
+              <input type="checkbox" id="eval-trajectory">
+              Trajectory Analysis
+            </label>
           </div>
           <div class="action-row">
             <button id="eval-submit-btn" class="btn btn-sm btn-primary">Submit Eval</button>
@@ -120,8 +117,15 @@
   <summary>Launch Experiment</summary>
   <div class="launch-form">
     <div class="form-row">
+      <label>Task Type
+        <select id="launch-task-type">
+          <option value="math" selected>Math</option>
+          <option value="deepcoder">Deepcoder</option>
+        </select>
+      </label>
       <label>Workflow
         <select id="launch-workflow">
+          <option value="single_agent">single_agent</option>
           <option value="evaluator_optimizer">evaluator_optimizer</option>
           <option value="voting">voting</option>
           <option value="orchestrator_workers">orchestrator_workers</option>
@@ -143,8 +147,16 @@
       <label>SLURM Config
         <select id="launch-node"></select>
       </label>
+      <label>GPUs
+        <input type="number" id="launch-n-gpus" min="1" max="8" value="2" class="input-sm">
+      </label>
+      <label>CPUs/GPU
+        <input type="number" id="launch-cpus-per-gpu" min="1" max="32" value="4" class="input-sm">
+      </label>
+      <label>Mem/GPU
+        <input type="text" id="launch-mem-per-gpu" value="48G" class="input-sm">
+      </label>
     </div>
-    <div id="launch-gpu-info" class="gpu-info"></div>
     <label>Extra Args (hydra overrides)
       <input type="text" id="launch-extra" placeholder="e.g. trainer.total_training_steps=100" class="input-full">
     </label>
