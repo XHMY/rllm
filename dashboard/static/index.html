@@ -70,24 +70,33 @@
 
         <div class="panel-section">
           <h3>Actions</h3>
-          <div class="action-row">
-            <input type="text" id="assign-job-input" placeholder="SLURM Job ID" class="input-sm">
+          <div id="assign-job-row" class="action-row" style="display:none">
+            <select id="assign-job-select" class="input-sm"></select>
             <button id="assign-job-btn" class="btn btn-sm">Assign</button>
           </div>
-          <div class="action-row">
+          <div id="cancel-job-row" class="action-row" style="display:none">
             <button id="cancel-job-btn" class="btn btn-sm btn-danger">Cancel Job</button>
           </div>
           <div class="action-row">
-            <select id="eval-dataset" class="input-sm">
-            </select>
-            <select id="eval-nrollouts" class="input-sm">
-              <option value="1">1 rollout</option>
-              <option value="3">3 rollouts</option>
-              <option value="5">5 rollouts</option>
-            </select>
-            <select id="eval-slurm-config" class="input-sm"></select>
-            <input type="number" id="eval-cpus-per-gpu" min="1" max="32" value="4" class="input-sm" placeholder="CPUs/GPU">
-            <input type="text" id="eval-mem-per-gpu" value="80G" class="input-sm" placeholder="Mem/GPU">
+            <label class="label-sm">Dataset
+              <select id="eval-dataset" class="input-sm"></select>
+            </label>
+            <label class="label-sm">N Rollouts
+              <select id="eval-nrollouts" class="input-sm">
+                <option value="1">1 rollout</option>
+                <option value="3">3 rollouts</option>
+                <option value="5">5 rollouts</option>
+              </select>
+            </label>
+            <label class="label-sm">SLURM Config
+              <select id="eval-slurm-config" class="input-sm"></select>
+            </label>
+            <label class="label-sm">CPUs/GPU
+              <input type="number" id="eval-cpus-per-gpu" min="1" max="32" value="4" class="input-sm">
+            </label>
+            <label class="label-sm">Mem/GPU
+              <input type="text" id="eval-mem-per-gpu" value="80G" class="input-sm">
+            </label>
             <label class="toggle-label-sm">
               <input type="checkbox" id="eval-trajectory">
               Trajectory Analysis
@@ -96,6 +105,26 @@
           <div class="action-row">
             <button id="eval-submit-btn" class="btn btn-sm btn-primary">Submit Eval</button>
             <button id="eval-dryrun-btn" class="btn btn-sm">Eval Dry Run</button>
+          </div>
+
+          <h4 style="margin:0.75rem 0 0.25rem">Resume Experiment</h4>
+          <div class="action-row">
+            <label class="label-sm">SLURM Config
+              <select id="resume-slurm-config" class="input-sm"></select>
+            </label>
+            <label class="label-sm">GPUs
+              <input type="number" id="resume-n-gpus" min="1" max="8" value="2" class="input-sm">
+            </label>
+            <label class="label-sm">CPUs/GPU
+              <input type="number" id="resume-cpus-per-gpu" min="1" max="32" value="4" class="input-sm">
+            </label>
+            <label class="label-sm">Mem/GPU
+              <input type="text" id="resume-mem-per-gpu" value="48G" class="input-sm">
+            </label>
+          </div>
+          <div class="action-row">
+            <button id="resume-btn" class="btn btn-sm btn-primary">Resume</button>
+            <button id="resume-dryrun-btn" class="btn btn-sm">Resume Dry Run</button>
           </div>
           <pre id="action-output" class="action-output"></pre>
         </div>
@@ -186,6 +215,6 @@
   </table>
 </details>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=2"></script>
 </body>
 </html>

@@ -1,5 +1,9 @@
 /* RLLM Dashboard — client-side logic */
 
+// ── Constants ────────────────────────────────────────────────────────────
+
+const NO_JOB = '\u2014'; // em-dash sentinel for "no SLURM job"
+
 // ── State ────────────────────────────────────────────────────────────────
 
 const state = {
@@ -267,53 +271,65 @@ function closeDetailPanel() {
 }
 
 async function loadExperimentDetail(name) {
-  const data = await api('GET', `/api/experiment/${encodeURIComponent(name)}`);
-  if (data.error) {
-    $('#panel-title').textContent = 'Not Found';
-    return;
+  try {
+    const data = await api('GET', `/api/experiment/${encodeURIComponent(name)}`);
+    if (data.error) {
+      $('#panel-title').textContent = 'Not Found';
+      return;
+    }
+    const exp = data.experiment;
+    const ev = data.eval;
+
+    $('#panel-title').textContent = exp.name;
+
+    // Metadata grid
+    const meta = [
+      ['Workflow', exp.workflow],
+      ['Policy', exp.policy],
+      ['Model', exp.model],
+      ['Dataset', exp.dataset],
+      ['GPUs', exp.gpu_count != null ? String(exp.gpu_count) : '—'],
+      ['Status', exp.status],
+      ['SLURM Job', exp.slurm_job],
+      ['SLURM State', exp.slurm_state],
+      ['Time', exp.time],
+      ['Node', exp.node],
+      ['WandB Run', exp.wandb_run],
+      ['Eval Status', exp.eval_status],
+      ['Eval Job', exp.eval_job],
+    ];
+    $('#panel-meta').innerHTML = meta.map(([k, v]) =>
+      `<span class="meta-key">${esc(k)}</span><span class="meta-val">${esc(v)}</span>`
+    ).join('');
+
+    // Progress bar
+    const pct = exp.total_steps > 0 ? Math.min(100, Math.round(exp.steps / exp.total_steps * 100)) : 0;
+    const statusClass = exp.status.toLowerCase();
+    const bar = $('#panel-progress-bar');
+    bar.style.width = pct + '%';
+    bar.className = 'progress-bar-large';
+    if (statusClass === 'finished') bar.style.background = 'var(--green)';
+    else if (statusClass === 'running') bar.style.background = 'var(--blue)';
+    else bar.style.background = 'var(--amber)';
+    $('#panel-progress-text').textContent = `${exp.steps} / ${exp.total_steps} (${pct}%)`;
+
+    // Conditional assign/cancel job display
+    const hasJob = exp.slurm_job && exp.slurm_job !== NO_JOB;
+    const assignRow = $('#assign-job-row');
+    const cancelRow = $('#cancel-job-row');
+    if (assignRow) assignRow.style.display = hasJob ? 'none' : 'flex';
+    if (cancelRow) cancelRow.style.display = hasJob ? 'flex' : 'none';
+    if (!hasJob) populateAssignJobDropdown();
+
+    // Pre-fill resume GPUs from experiment (reset to default 2 if unavailable)
+    const resumeGpus = $('#resume-n-gpus');
+    if (resumeGpus) resumeGpus.value = exp.gpu_count != null ? exp.gpu_count : 2;
+
+    // Eval cards
+    renderEvalCards(ev);
+  } catch (err) {
+    console.error('loadExperimentDetail error:', err);
   }
-  const exp = data.experiment;
-  const ev = data.eval;
-
-  $('#panel-title').textContent = exp.name;
-
-  // Metadata grid
-  const meta = [
-    ['Workflow', exp.workflow],
-    ['Policy', exp.policy],
-    ['Model', exp.model],
-    ['Dataset', exp.dataset],
-    ['GPUs', exp.gpu_count != null ? String(exp.gpu_count) : '—'],
-    ['Status', exp.status],
-    ['SLURM Job', exp.slurm_job],
-    ['SLURM State', exp.slurm_state],
-    ['Time', exp.time],
-    ['Node', exp.node],
-    ['WandB Run', exp.wandb_run],
-    ['Eval Status', exp.eval_status],
-    ['Eval Job', exp.eval_job],
-  ];
-  $('#panel-meta').innerHTML = meta.map(([k, v]) =>
-    `<span class="meta-key">${esc(k)}</span><span class="meta-val">${esc(v)}</span>`
-  ).join('');
-
-  // Progress bar
-  const pct = exp.total_steps > 0 ? Math.min(100, Math.round(exp.steps / exp.total_steps * 100)) : 0;
-  const statusClass = exp.status.toLowerCase();
-  const bar = $('#panel-progress-bar');
-  bar.style.width = pct + '%';
-  bar.className = 'progress-bar-large';
-  if (statusClass === 'finished') bar.style.background = 'var(--green)';
-  else if (statusClass === 'running') bar.style.background = 'var(--blue)';
-  else bar.style.background = 'var(--amber)';
-  $('#panel-progress-text').textContent = `${exp.steps} / ${exp.total_steps} (${pct}%)`;
-
-  // Pre-fill assign job input
-  const assignInput = $('#assign-job-input');
-  assignInput.value = (exp.slurm_job && exp.slurm_job !== '\u2014') ? exp.slurm_job : '';
-
-  // Eval cards
-  renderEvalCards(ev);
 }
 
 // ── Eval Cards ───────────────────────────────────────────────────────────
@@ -378,6 +394,23 @@ function renderEvalCards(ev) {
   container.innerHTML = html;
 }
 
+// ── Assign Job Dropdown ──────────────────────────────────────────────────
+
+function populateAssignJobDropdown() {
+  const sel = $('#assign-job-select');
+  sel.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '-- Select a job --';
+  sel.appendChild(placeholder);
+  for (const j of state.slurmJobs) {
+    const opt = document.createElement('option');
+    opt.value = j.job_id;
+    opt.textContent = `${j.job_id} - ${j.name} (${j.state})`;
+    sel.appendChild(opt);
+  }
+}
+
 // ── Utility ──────────────────────────────────────────────────────────────
 
 function esc(s) {
@@ -385,6 +418,15 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = String(s);
   return d.innerHTML;
+}
+
+function getSelectedExp() {
+  if (!state.selectedExperiment) return null;
+  return state.experiments.find(e => e.name === state.selectedExperiment) || null;
+}
+
+function inferTaskType(dataset) {
+  return dataset === 'deepcoder' ? 'deepcoder' : 'math';
 }
 
 // ── SLURM table ──────────────────────────────────────────────────────────
@@ -414,8 +456,8 @@ function showOutput(el, text) {
 }
 
 $('#assign-job-btn').addEventListener('click', async () => {
-  const jobId = $('#assign-job-input').value.trim();
-  if (!state.selectedExperiment) return;
+  const jobId = $('#assign-job-select').value;
+  if (!state.selectedExperiment || !jobId) return;
   const data = await api('POST', '/api/assign-job', {
     experiment_name: state.selectedExperiment, job_id: jobId,
   });
@@ -424,10 +466,8 @@ $('#assign-job-btn').addEventListener('click', async () => {
 });
 
 $('#cancel-job-btn').addEventListener('click', async () => {
-  if (!state.selectedExperiment) return;
-  // Find the experiment's SLURM job ID
-  const exp = state.experiments.find(e => e.name === state.selectedExperiment);
-  if (!exp || !exp.slurm_job || exp.slurm_job === '\u2014') {
+  const exp = getSelectedExp();
+  if (!exp || !exp.slurm_job || exp.slurm_job === NO_JOB) {
     showOutput(actionOutput, 'No SLURM Job ID assigned.');
     return;
   }
@@ -441,9 +481,8 @@ $('#eval-dryrun-btn').addEventListener('click', () => submitEval(true));
 
 async function submitEval(dryRun) {
   if (!state.selectedExperiment) return;
-  // Auto-infer task_type from selected dataset
   const dataset = $('#eval-dataset').value;
-  const taskType = dataset === 'deepcoder' ? 'deepcoder' : 'math';
+  const taskType = inferTaskType(dataset);
   const data = await api('POST', '/api/eval/submit', {
     experiment_name: state.selectedExperiment,
     dataset: dataset,
@@ -487,17 +526,22 @@ function populateEvalDatasets() {
 // ── Launch form ──────────────────────────────────────────────────────────
 
 async function loadSlurmConfigs() {
-  const data = await api('GET', '/api/slurm-configs');
-  const configs = data.configs || [];
-  // Populate both launch and eval SLURM config dropdowns
-  for (const sel of [$('#launch-node'), $('#eval-slurm-config')]) {
-    sel.innerHTML = '';
-    for (const c of configs) {
-      const opt = document.createElement('option');
-      opt.value = c.name;
-      opt.textContent = `${c.name} (${c.gpu_type || 'unknown'})`;
-      sel.appendChild(opt);
+  try {
+    const data = await api('GET', '/api/slurm-configs');
+    const configs = data.configs || [];
+    // Populate launch, eval, and resume SLURM config dropdowns
+    for (const sel of [$('#launch-node'), $('#eval-slurm-config'), $('#resume-slurm-config')]) {
+      if (!sel) continue;
+      sel.innerHTML = '';
+      for (const c of configs) {
+        const opt = document.createElement('option');
+        opt.value = c.name;
+        opt.textContent = `${c.name} (${c.gpu_type || 'unknown'})`;
+        sel.appendChild(opt);
+      }
     }
+  } catch (err) {
+    console.error('loadSlurmConfigs error:', err);
   }
 }
 
@@ -518,6 +562,36 @@ async function doLaunch(dryRun) {
     mem_per_gpu: $('#launch-mem-per-gpu').value,
   });
   showOutput(launchOutput, data.output);
+  if (!dryRun) await loadExperiments();
+}
+
+// ── Resume handlers ──────────────────────────────────────────────────────
+
+$('#resume-btn').addEventListener('click', () => doResume(false));
+$('#resume-dryrun-btn').addEventListener('click', () => doResume(true));
+
+async function doResume(dryRun) {
+  const exp = getSelectedExp();
+  if (!exp) return;
+
+  // Auto-derive from experiment metadata
+  const sharePolicy = exp.policy === 'share_policy' ? 'true' : 'false';
+  const taskType = inferTaskType(exp.dataset);
+  const nGpus = exp.gpu_count != null ? exp.gpu_count : parseInt($('#resume-n-gpus').value);
+
+  const data = await api('POST', '/api/launch', {
+    workflow: exp.workflow,
+    model: exp.model,
+    share_policy: sharePolicy,
+    node: $('#resume-slurm-config').value,
+    task_type: taskType,
+    n_gpus: nGpus,
+    cpus_per_gpu: parseInt($('#resume-cpus-per-gpu').value),
+    mem_per_gpu: $('#resume-mem-per-gpu').value,
+    extra_args: '',
+    dry_run: dryRun,
+  });
+  showOutput(actionOutput, data.output);
   if (!dryRun) await loadExperiments();
 }
 

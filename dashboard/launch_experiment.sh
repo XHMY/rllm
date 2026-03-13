@@ -225,7 +225,7 @@ ppo_max_token_len=$(get_ppo_max_token_len "$MODEL" "$GPU_TYPE")
 
 # ── Build sbatch script ─────────────────────────────────────────────────────
 sbatch_script="#!/bin/bash
-#SBATCH --job-name=verl-ray
+#SBATCH --job-name=${exp_name}
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err"
 
@@ -320,5 +320,26 @@ else
     output=$(sbatch "$tmpfile" 2>&1)
     job_id=$(echo "$output" | grep -oP '\d+' | tail -1)
     rm -f "$tmpfile"
+
+    # Write slurm_job_id into training_metadata.json
+    meta_dir="checkpoints/${PROJECT_NAME}/${exp_name}"
+    meta_file="${meta_dir}/training_metadata.json"
+    mkdir -p "$meta_dir"
+    if [[ -f "$meta_file" ]]; then
+        # Update existing metadata — add/overwrite slurm_job_id
+        tmp_meta=$(mktemp)
+        python3 -c "
+import json, sys
+with open('$meta_file') as f:
+    meta = json.load(f)
+meta['slurm_job_id'] = '$job_id'
+with open('$tmp_meta', 'w') as f:
+    json.dump(meta, f, indent=2)
+" && mv "$tmp_meta" "$meta_file"
+    else
+        # Create new metadata file
+        echo "{\"slurm_job_id\": \"${job_id}\", \"experiment_name\": \"${exp_name}\", \"project_name\": \"${PROJECT_NAME}\"}" | python3 -m json.tool > "$meta_file"
+    fi
+
     echo "Submitted ${exp_name} → Job ${job_id}"
 fi

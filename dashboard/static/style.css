@@ -74,6 +74,14 @@ body {
   cursor: pointer;
 }
 
+.label-sm {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
 .toggle-label-sm {
   display: inline-flex;
   align-items: center;
