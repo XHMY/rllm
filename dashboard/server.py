@@ -17,8 +17,12 @@ from dashboard.backend import (
     assign_job_id,
     build_experiment_table,
     cancel_job,
+    get_analysis_markdown,
+    get_analysis_status,
     get_eval_results_table,
+    has_trajectory_dirs,
     launch_experiment,
+    launch_trajectory_analysis,
     load_slurm_configs,
     parse_slurm_config,
     submit_eval_job,
@@ -69,6 +73,10 @@ class EvalSubmitRequest(BaseModel):
     trajectory_analysis: bool = False
 
 
+class AnalyzeRequest(BaseModel):
+    experiment_name: str
+
+
 # ── API endpoints ────────────────────────────────────────────────────────────
 
 
@@ -89,13 +97,22 @@ def api_experiments():
 
 @app.get("/api/experiment/{name}")
 def api_experiment_detail(name: str):
-    """Single experiment detail + eval results."""
+    """Single experiment detail + eval results + trajectory analysis info."""
     experiments, _ = build_experiment_table(_checkpoint_dir)
     exp = next((e for e in experiments if e["name"] == name), None)
     if not exp:
         return {"error": f"Experiment '{name}' not found"}
     eval_data = get_eval_results_table(name, _checkpoint_dir)
-    return {"experiment": exp, "eval": eval_data}
+    traj_dirs = has_trajectory_dirs(name, _checkpoint_dir)
+    analysis_md = get_analysis_markdown(name, _checkpoint_dir)
+    analysis_status = get_analysis_status(name)
+    return {
+        "experiment": exp,
+        "eval": eval_data,
+        "trajectory_dirs": traj_dirs,
+        "analysis_markdown": analysis_md,
+        "analysis_status": analysis_status,
+    }
 
 
 @app.get("/api/slurm-configs")
@@ -149,6 +166,19 @@ def api_eval_submit(req: EvalSubmitRequest):
         trajectory_analysis=req.trajectory_analysis,
     )
     return {"output": output}
+
+
+@app.post("/api/analyze-trajectories")
+def api_analyze_trajectories(req: AnalyzeRequest):
+    msg = launch_trajectory_analysis(req.experiment_name, _checkpoint_dir)
+    return {"message": msg}
+
+
+@app.get("/api/analysis-status/{name}")
+def api_analysis_status(name: str):
+    status = get_analysis_status(name)
+    md = get_analysis_markdown(name, _checkpoint_dir) if status != "running" else None
+    return {"status": status, "markdown": md}
 
 
 # ── Static file serving ─────────────────────────────────────────────────────

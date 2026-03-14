@@ -9,7 +9,7 @@ You are a trajectory analysis assistant for the rllm project. When given a traje
 
 1. **Run the unified analysis script** to get quantitative metrics:
    ```
-   cd /nfs/hpc/share/guoxingy/workspace/Run-MultiPolicy-Training/rllm && python3 scripts/analyze_trajectories.py <trajectory_dir> [--run-filter <filter>]
+   cd /nfs/hpc/share/zengyif/workspace/rllm_0.2.1 && python3 scripts/analyze_trajectories.py <trajectory_dir> [--run-filter <filter>]
    ```
 
    For comparing across training steps or analyzing multiple directories at once:
@@ -73,26 +73,76 @@ The script auto-detects these workflow types from trajectory agent names:
 - **single-agent**: Only `generator` trajectories
 - **evaluator-optimizer**: Has `evaluator` + `generator` trajectories
 - **voting**: Has `aggregator` + `generator0/1/2` trajectories
-- **orchestrator-workers**: Has `orchestrator` + `worker` trajectories
+- **orchestrator-workers**: Has `orchestrator` + `worker` + `synthesizer` trajectories
 
-## Trajectory Directory Locations
+## Trajectory Directory Layout
 
-Known evaluation trajectory directories (relative to project root):
+Trajectories are produced by `dashboard/evaluate_checkpoints.py` and stored alongside checkpoints.
 
-**`trajectory_outputs/` (s430 training run, current):**
-- `trajectory_outputs/evaluator_optimizer-qwen3_1.7b_s430-math/` — eval-opt multi-policy
-- `trajectory_outputs/evaluator_optimizer-qwen3_1.7b_s430-math-per_agent_reward/` — eval-opt per-agent reward
-- `trajectory_outputs/evaluator_optimizer-qwen3_1.7b_s430-share_policy-math/` — eval-opt share-policy
-- `trajectory_outputs/orchestrator_workers-qwen3_1.7b_s430-math/` — orch-workers multi-policy
-- `trajectory_outputs/orchestrator_workers-qwen3_1.7b_s430-share_policy-math/` — orch-workers share-policy
-- `trajectory_outputs/voting-qwen3_1.7b_s430-math/` — voting multi-policy
-- `trajectory_outputs/voting-qwen3_1.7b_s430-math-per_agent_reward/` — voting per-agent reward
-- `trajectory_outputs/voting-qwen3_1.7b_s430-share_policy-math/` — voting share-policy
+### Directory structure
 
-**`evaluation_trajectories/` (earlier runs):**
-- `evaluation_trajectories/qwen3_1.7b-math_single_agent-length5120_step*/` — single-agent
-- `evaluation_trajectories/evaluator_optimizer-qwen3_1.7b-math_step*/` — evaluator-optimizer
-- `evaluation_trajectories/voting-qwen3_1.7b-math_step*/` — voting
-- `evaluation_trajectories/orchestrator_workers-qwen3_1.7b-math_step*/` — orchestrator-workers
+```
+checkpoints/{project}/{experiment_name}/
+├── eval_results.jsonl                          # Per-experiment evaluation metrics (JSONL)
+├── global_step_10/                             # Training checkpoint
+├── global_step_20/
+├── ...
+├── {experiment_name}_step{N}/                  # Trajectory output dir (from --trajectory-output-dir)
+│   ├── eval_0.json                             # One JSON per evaluated problem
+│   ├── eval_1.json
+│   └── ...
+├── training_metadata.json
+└── latest_checkpointed_iteration.txt
+```
 
-Pass a parent directory to auto-discover all subdirs and compare steps.
+### How trajectories are generated
+
+The dashboard UI can submit eval jobs with trajectory analysis enabled:
+- Sets `--trajectory-output-dir checkpoints/{project}/{experiment_name}`
+- Sets `--max-samples 30` (first 30 problems only) and `--last-checkpoint-only`
+- Trajectory files are saved as `{experiment_name}_step{N}/eval_{i}.json`
+
+You can also generate trajectories manually:
+```bash
+python -m dashboard.evaluate_checkpoints \
+    --eval-mode trained_checkpoint \
+    --checkpoints-dir checkpoints/{project} \
+    --experiment-filter '^{experiment_name}$' \
+    --trajectory-output-dir checkpoints/{project}/{experiment_name} \
+    --max-samples 30 \
+    --last-checkpoint-only
+```
+
+### Current checkpoint projects and experiments
+
+**`checkpoints/rllm-workflow-MARL-v2/` (current v2 runs):**
+- `evaluator_optimizer-qwen3_1.7b-multi_lora-math/` — eval-opt multi-LoRA
+- `evaluator_optimizer-qwen3_1.7b-share_policy-math/` — eval-opt share-policy
+- `orchestrator_workers-qwen3_1.7b-multi_lora-math/` — orch-workers multi-LoRA
+- `orchestrator_workers-qwen3_1.7b-share_policy-math/` — orch-workers share-policy
+- `voting-qwen3_1.7b-multi_lora-math/` — voting multi-LoRA
+- `voting-qwen3_1.7b-share_policy-math/` — voting share-policy
+- `single_agent-qwen3_1.7b-multi_lora-math/` — single-agent 1.7B
+- `single_agent-qwen3_0.6b-multi_lora-math/` — single-agent 0.6B
+- `voting-qwen3_0.6b-multi_lora-math/` — voting 0.6B
+- `single_agent-qwen3_1.7b-multi_lora-deepcoder/` — single-agent deepcoder
+- `voting-qwen3_4b-multi_lora-deepcoder/` — voting 4B deepcoder
+
+**`evaluation_trajectories/` (legacy runs, older naming):**
+- `qwen3_1.7b-math_single_agent-length5120_step*/` — single-agent
+- `evaluator_optimizer-qwen3_1.7b-math_step*/` — evaluator-optimizer
+- `voting-qwen3_1.7b-math_step*/` — voting
+- `orchestrator_workers-qwen3_1.7b-math_step*/` — orchestrator-workers
+
+### Eval results JSONL
+
+Per-experiment eval metrics are in `eval_results.jsonl` within each experiment dir. Each line is a JSON object with:
+- `experiment_name`, `checkpoint_step`, `dataset`, `eval_mode`, `n_rollouts`
+- `accuracy`, `mean_accuracy`, `std_accuracy`, `pass_at_n` (when n_rollouts > 1)
+
+To read eval results for an experiment:
+```
+Grep: "accuracy" in checkpoints/rllm-workflow-MARL-v2/{experiment_name}/eval_results.jsonl
+```
+
+Pass a parent directory to the analysis script to auto-discover all trajectory subdirs and compare steps.

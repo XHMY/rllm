@@ -6,6 +6,8 @@ import random
 import re
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +30,11 @@ POLICY_ABBREV = {
     "share_policy": "share",
     "multi_lora": "multi",
 }
+
+# ── Trajectory analysis state ─────────────────────────────────────────────
+_analysis_processes: dict[str, dict] = {}
+CLAUDE_CLI = "/nfs/stak/users/zengyif/.local/bin/claude"
+RLLM_WORKDIR = "/nfs/hpc/share/zengyif/workspace/rllm_0.2.1"
 
 
 # ── SLURM config loading ───────────────────────────────────────────────────
@@ -585,3 +592,134 @@ def cancel_job(job_id: str) -> str:
         return "scancel not found \u2014 is SLURM available?"
     except Exception as e:
         return f"ERROR: {e}"
+
+
+# ── Trajectory analysis ───────────────────────────────────────────────────
+
+
+def has_trajectory_dirs(
+    experiment_name: str, checkpoint_dir: str, project: str = DEFAULT_PROJECT
+) -> list[str]:
+    """Return list of trajectory subdirectory names that contain eval_*.json files."""
+    exp_dir = Path(checkpoint_dir) / project / experiment_name
+    if not exp_dir.is_dir():
+        return []
+    traj_dirs = []
+    prefix = experiment_name + "_step"
+    for d in sorted(exp_dir.iterdir()):
+        if d.is_dir() and d.name.startswith(prefix):
+            if any(d.glob("eval_*.json")):
+                traj_dirs.append(d.name)
+    return traj_dirs
+
+
+def get_analysis_markdown(
+    experiment_name: str, checkpoint_dir: str, project: str = DEFAULT_PROJECT
+) -> str | None:
+    """Return trajectory analysis markdown content, or None if not available."""
+    md_path = Path(checkpoint_dir) / project / experiment_name / "trajectory_analysis.md"
+    if md_path.exists():
+        try:
+            return md_path.read_text()
+        except OSError:
+            return None
+    return None
+
+
+def get_analysis_status(experiment_name: str) -> str:
+    """Return analysis status: 'running', 'completed', or 'none'."""
+    if experiment_name in _analysis_processes:
+        info = _analysis_processes[experiment_name]
+        proc = info["proc"]
+        if proc.poll() is None:
+            return "running"
+        # Process finished — clean up
+        del _analysis_processes[experiment_name]
+        return "completed"
+    return "none"
+
+
+def launch_trajectory_analysis(
+    experiment_name: str,
+    checkpoint_dir: str,
+    project: str = DEFAULT_PROJECT,
+) -> str:
+    """Launch Claude CLI to analyze trajectories in the background."""
+    if not experiment_name or not experiment_name.strip():
+        return "Please select an experiment."
+    experiment_name = experiment_name.strip()
+
+    # Check if already running
+    if experiment_name in _analysis_processes:
+        proc = _analysis_processes[experiment_name]["proc"]
+        if proc.poll() is None:
+            return f"Analysis already running for {experiment_name}."
+
+    exp_dir = Path(checkpoint_dir) / project / experiment_name
+    if not exp_dir.is_dir():
+        return f"Experiment directory not found: {exp_dir}"
+
+    traj_dirs = has_trajectory_dirs(experiment_name, checkpoint_dir, project)
+    if not traj_dirs:
+        return f"No trajectory directories found in {exp_dir}"
+
+    prompt = (
+        f"Analyze the trajectories in {exp_dir}. "
+        "Output your analysis as a well-structured markdown document."
+    )
+    output_path = exp_dir / "trajectory_analysis.md"
+
+    try:
+        proc = subprocess.Popen(
+            [
+                CLAUDE_CLI,
+                "-p",
+                "--agent", "trajectory-analyzer",
+                "--output-format", "text",
+                "--max-budget-usd", "5",
+                "--dangerously-skip-permissions",
+                prompt,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=RLLM_WORKDIR,
+        )
+    except FileNotFoundError:
+        return f"Claude CLI not found at {CLAUDE_CLI}"
+    except Exception as e:
+        return f"Failed to launch Claude: {e}"
+
+    _analysis_processes[experiment_name] = {
+        "proc": proc,
+        "started": time.time(),
+    }
+
+    def _wait_and_save():
+        try:
+            stdout, stderr = proc.communicate(timeout=600)
+            if proc.returncode == 0 and stdout.strip():
+                output_path.write_text(stdout)
+            else:
+                output_path.write_text(
+                    f"# Analysis Failed\n\n"
+                    f"Exit code: {proc.returncode}\n\n"
+                    f"```\n{stderr}\n```\n"
+                )
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            output_path.write_text(
+                "# Analysis Timed Out\n\nClaude CLI exceeded 10 minute timeout.\n"
+            )
+        except Exception as e:
+            output_path.write_text(f"# Analysis Error\n\n```\n{e}\n```\n")
+        finally:
+            _analysis_processes.pop(experiment_name, None)
+
+    thread = threading.Thread(target=_wait_and_save, daemon=True)
+    thread.start()
+
+    return (
+        f"Analysis launched for {experiment_name}. "
+        "Claude is analyzing trajectories in the background (may take 2-5 minutes)."
+    )

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RLLM Dashboard</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
 
@@ -130,11 +131,23 @@
         </div>
       </div>
 
-      <!-- Right column: eval cards -->
+      <!-- Right column: eval cards + trajectory analysis -->
       <div class="detail-right">
         <div class="panel-section">
           <h3>Evaluation Results</h3>
           <div id="panel-eval"></div>
+        </div>
+
+        <div id="panel-trajectory-section" class="panel-section" style="display:none">
+          <div class="trajectory-header">
+            <h3>Trajectory Analysis</h3>
+            <div class="trajectory-actions">
+              <button id="analyze-btn" class="btn btn-sm btn-primary">Analyze Trajectories</button>
+              <span id="analysis-status-badge" class="badge" style="display:none"></span>
+            </div>
+          </div>
+          <div id="panel-trajectory-dirs"></div>
+          <div id="panel-analysis-md" class="analysis-markdown"></div>
         </div>
       </div>
     </div>

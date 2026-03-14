@@ -13,6 +13,7 @@ const state = {
   filters: { datasetCategory: null, model: null, status: 'All' },
   selectedExperiment: null,
   refreshTimer: null,
+  analysisPolling: null,
 };
 
 // ── DOM refs ─────────────────────────────────────────────────────────────
@@ -268,6 +269,7 @@ function closeDetailPanel() {
   detailPanel.style.display = 'none';
   state.selectedExperiment = null;
   $$('.pivot-cell-entry').forEach(el => el.classList.remove('selected'));
+  stopAnalysisPolling();
 }
 
 async function loadExperimentDetail(name) {
@@ -327,8 +329,90 @@ async function loadExperimentDetail(name) {
 
     // Eval cards
     renderEvalCards(ev);
+
+    // Trajectory analysis section
+    const trajDirs = data.trajectory_dirs || [];
+    const analysisMd = data.analysis_markdown;
+    const analysisStatus = data.analysis_status;
+    const trajSection = $('#panel-trajectory-section');
+
+    if (trajDirs.length > 0 || analysisMd) {
+      trajSection.style.display = 'block';
+
+      // Show trajectory directory names
+      $('#panel-trajectory-dirs').innerHTML = trajDirs.length > 0
+        ? '<span style="font-size:0.8rem;color:var(--text-secondary)">'
+          + trajDirs.map(d => esc(d)).join(', ') + '</span>'
+        : '';
+
+      // Button state
+      const analyzeBtn = $('#analyze-btn');
+      const statusBadge = $('#analysis-status-badge');
+
+      if (analysisStatus === 'running') {
+        analyzeBtn.disabled = true;
+        analyzeBtn.textContent = 'Analyzing...';
+        statusBadge.style.display = 'inline-block';
+        statusBadge.className = 'badge badge-running';
+        statusBadge.textContent = 'Running';
+        startAnalysisPolling(name);
+      } else {
+        analyzeBtn.disabled = false;
+        analyzeBtn.textContent = analysisMd ? 'Re-analyze' : 'Analyze Trajectories';
+        statusBadge.style.display = 'none';
+        stopAnalysisPolling();
+      }
+
+      renderAnalysisMarkdown(analysisMd);
+    } else {
+      trajSection.style.display = 'none';
+      stopAnalysisPolling();
+    }
   } catch (err) {
     console.error('loadExperimentDetail error:', err);
+  }
+}
+
+// ── Trajectory Analysis ──────────────────────────────────────────────────
+
+function renderAnalysisMarkdown(md) {
+  const container = $('#panel-analysis-md');
+  if (!md) {
+    container.innerHTML = '';
+    return;
+  }
+  if (typeof marked !== 'undefined') {
+    container.innerHTML = marked.parse(md);
+  } else {
+    container.innerHTML = '<pre style="white-space:pre-wrap">' + esc(md) + '</pre>';
+  }
+}
+
+function startAnalysisPolling(experimentName) {
+  stopAnalysisPolling();
+  state.analysisPolling = setInterval(async () => {
+    try {
+      const data = await api('GET', `/api/analysis-status/${encodeURIComponent(experimentName)}`);
+      if (data.status !== 'running') {
+        stopAnalysisPolling();
+        const btn = $('#analyze-btn');
+        btn.disabled = false;
+        btn.textContent = data.markdown ? 'Re-analyze' : 'Analyze Trajectories';
+        $('#analysis-status-badge').style.display = 'none';
+        if (data.markdown) {
+          renderAnalysisMarkdown(data.markdown);
+        }
+      }
+    } catch (err) {
+      console.error('Analysis polling error:', err);
+    }
+  }, 10000);
+}
+
+function stopAnalysisPolling() {
+  if (state.analysisPolling) {
+    clearInterval(state.analysisPolling);
+    state.analysisPolling = null;
   }
 }
 
@@ -505,6 +589,27 @@ async function submitEval(dryRun) {
   showOutput(actionOutput, data.output);
   if (!dryRun) await loadExperiments();
 }
+
+// ── Analyze Trajectories button ──────────────────────────────────────────
+
+$('#analyze-btn').addEventListener('click', async () => {
+  if (!state.selectedExperiment) return;
+  const btn = $('#analyze-btn');
+  btn.disabled = true;
+  btn.textContent = 'Launching...';
+
+  const data = await api('POST', '/api/analyze-trajectories', {
+    experiment_name: state.selectedExperiment,
+  });
+  showOutput(actionOutput, data.message);
+
+  btn.textContent = 'Analyzing...';
+  const badge = $('#analysis-status-badge');
+  badge.style.display = 'inline-block';
+  badge.className = 'badge badge-running';
+  badge.textContent = 'Running';
+  startAnalysisPolling(state.selectedExperiment);
+});
 
 // ── Eval dataset population ──────────────────────────────────────────────
 
