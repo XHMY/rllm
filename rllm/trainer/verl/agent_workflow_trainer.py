@@ -257,6 +257,8 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
                 # Update training step in engine for episode logging
                 self.agent_execution_engine.set_training_step(self.global_steps, mode="train", epoch=epoch)
 
+                is_last_step = self.global_steps >= self.total_training_steps
+
                 with marked_timer("step", timing_raw):
                     # generate trajectories
                     final_gen_batch_output = self.generate_trajectories(batch=new_batch, timing_raw=timing_raw)
@@ -583,7 +585,7 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
                             val_metrics: dict = self._validate_agent()
                         metrics.update(val_metrics)
 
-                    if self.config.trainer.save_freq > 0 and self.global_steps % self.config.trainer.save_freq == 0:
+                    if self.config.trainer.save_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.save_freq == 0):
                         with marked_timer("save_checkpoint", timing_raw, color="green"):
                             self._save_checkpoint()
 
@@ -641,7 +643,7 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
 
                 self.global_steps += 1
 
-                if self.global_steps >= self.total_training_steps:
+                if is_last_step:
                     # perform validation after training
                     if self.val_reward_fn is not None:
                         self.agent_execution_engine.set_training_step(self.global_steps, mode="val", epoch=epoch)
@@ -1083,6 +1085,7 @@ class AgentWorkflowPPOTrainer(RayPPOTrainer):
         )
         metadata = {
             "global_steps": self.global_steps,
+            "total_training_steps": self.total_training_steps,
             "experiment_name": self.config.trainer.experiment_name,
             "project_name": self.config.trainer.project_name,
             "slurm_job_id": os.environ.get("SLURM_JOB_ID", None),
