@@ -850,7 +850,7 @@ async def evaluate_checkpoint(
 
     # Save detailed trajectories if output directory specified
     if trajectory_output_dir:
-        checkpoint_name = f"{checkpoint.experiment_name}_step{checkpoint.checkpoint_step}"
+        checkpoint_name = f"evaluation_trajectories/step_{checkpoint.checkpoint_step}"
         for i, runs in enumerate(episodes_by_problem):
             for j, episode in enumerate(runs):
                 if isinstance(episode, Episode):

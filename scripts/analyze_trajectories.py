@@ -585,13 +585,20 @@ def analyze_orchestrator_workers(all_data):
 # ============================================================================
 
 def parse_experiment_key(dirname):
-    """Strip _step\\d+ suffix from directory name to get (experiment_key, step_number).
+    """Strip step suffix from directory name to get (experiment_key, step_number).
+
+    Supports both new format (step_290) and old format (experiment_step290).
 
     Examples:
+        'step_290' -> ('default', 290)
         'voting-qwen3_1.7b-math_step290' -> ('voting-qwen3_1.7b-math', 290)
-        'qwen3_1.7b-math_single_agent-length5120_step430' -> ('qwen3_1.7b-math_single_agent-length5120', 430)
         'some_dir_without_step' -> ('some_dir_without_step', None)
     """
+    # New format: step_290 (inside evaluation_trajectories/)
+    m = re.search(r'^step_(\d+)$', dirname)
+    if m:
+        return 'default', int(m.group(1))
+    # Old format: experiment_name_step290
     m = re.search(r'^(.+?)_step(\d+)$', dirname)
     if m:
         return m.group(1), int(m.group(2))
@@ -602,7 +609,8 @@ def resolve_directories(paths):
     """Resolve input paths into a list of trajectory directories.
 
     If a path contains .json files, treat it as a trajectory directory.
-    Otherwise, scan its immediate subdirectories for trajectory directories.
+    Otherwise, scan for evaluation_trajectories/ subdirectory first,
+    then fall back to scanning immediate subdirectories.
     """
     traj_dirs = []
     for p in paths:
@@ -615,9 +623,12 @@ def resolve_directories(paths):
         if json_files:
             traj_dirs.append(p)
         else:
+            # Check for evaluation_trajectories/ subdirectory
+            eval_traj_dir = os.path.join(p, "evaluation_trajectories")
+            scan_dir = eval_traj_dir if os.path.isdir(eval_traj_dir) else p
             # Scan subdirectories
-            for sub in sorted(os.listdir(p)):
-                subpath = os.path.join(p, sub)
+            for sub in sorted(os.listdir(scan_dir)):
+                subpath = os.path.join(scan_dir, sub)
                 if os.path.isdir(subpath):
                     sub_jsons = [f for f in os.listdir(subpath) if f.endswith(".json")]
                     if sub_jsons:

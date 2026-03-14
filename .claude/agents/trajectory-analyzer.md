@@ -87,10 +87,14 @@ checkpoints/{project}/{experiment_name}/
 ├── global_step_10/                             # Training checkpoint
 ├── global_step_20/
 ├── ...
-├── {experiment_name}_step{N}/                  # Trajectory output dir (from --trajectory-output-dir)
-│   ├── eval_0.json                             # One JSON per evaluated problem
-│   ├── eval_1.json
-│   └── ...
+├── evaluation_trajectories/                    # Trajectory output (from --trajectory-output-dir)
+│   ├── step_{N}/                               # One folder per evaluated checkpoint step
+│   │   ├── eval_0.json                         # One JSON per evaluated problem
+│   │   ├── eval_1.json
+│   │   └── ...
+│   ├── step_{M}/
+│   │   └── ...
+│   └── trajectory_analysis.md                  # Claude analysis output (if generated)
 ├── training_metadata.json
 └── latest_checkpointed_iteration.txt
 ```
@@ -100,7 +104,7 @@ checkpoints/{project}/{experiment_name}/
 The dashboard UI can submit eval jobs with trajectory analysis enabled:
 - Sets `--trajectory-output-dir checkpoints/{project}/{experiment_name}`
 - Sets `--max-samples 30` (first 30 problems only) and `--last-checkpoint-only`
-- Trajectory files are saved as `{experiment_name}_step{N}/eval_{i}.json`
+- Trajectory files are saved as `evaluation_trajectories/step_{N}/eval_{i}.json`
 
 You can also generate trajectories manually:
 ```bash
