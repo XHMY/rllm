@@ -600,14 +600,13 @@ def cancel_job(job_id: str) -> str:
 def has_trajectory_dirs(
     experiment_name: str, checkpoint_dir: str, project: str = DEFAULT_PROJECT
 ) -> list[str]:
-    """Return list of trajectory subdirectory names that contain eval_*.json files."""
-    exp_dir = Path(checkpoint_dir) / project / experiment_name
-    if not exp_dir.is_dir():
+    """Return list of trajectory step directory names inside evaluation_trajectories/."""
+    traj_root = Path(checkpoint_dir) / project / experiment_name / "evaluation_trajectories"
+    if not traj_root.is_dir():
         return []
     traj_dirs = []
-    prefix = experiment_name + "_step"
-    for d in sorted(exp_dir.iterdir()):
-        if d.is_dir() and d.name.startswith(prefix):
+    for d in sorted(traj_root.iterdir()):
+        if d.is_dir() and d.name.startswith("step_"):
             if any(d.glob("eval_*.json")):
                 traj_dirs.append(d.name)
     return traj_dirs
@@ -617,7 +616,7 @@ def get_analysis_markdown(
     experiment_name: str, checkpoint_dir: str, project: str = DEFAULT_PROJECT
 ) -> str | None:
     """Return trajectory analysis markdown content, or None if not available."""
-    md_path = Path(checkpoint_dir) / project / experiment_name / "trajectory_analysis.md"
+    md_path = Path(checkpoint_dir) / project / experiment_name / "evaluation_trajectories" / "trajectory_analysis.md"
     if md_path.exists():
         try:
             return md_path.read_text()
@@ -663,11 +662,12 @@ def launch_trajectory_analysis(
     if not traj_dirs:
         return f"No trajectory directories found in {exp_dir}"
 
+    traj_root = exp_dir / "evaluation_trajectories"
     prompt = (
-        f"Analyze the trajectories in {exp_dir}. "
+        f"Analyze the trajectories in {traj_root}. "
         "Output your analysis as a well-structured markdown document."
     )
-    output_path = exp_dir / "trajectory_analysis.md"
+    output_path = traj_root / "trajectory_analysis.md"
 
     try:
         proc = subprocess.Popen(
