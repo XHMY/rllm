@@ -14,7 +14,7 @@ from dashboard.task_configs import EVAL_DATASETS, infer_task_type, resolve_launc
 
 DEFAULT_CHECKPOINT_DIR = "checkpoints"
 DEFAULT_PROJECT = "rllm-workflow-MARL-v2"
-TOTAL_TRAINING_STEPS = 301
+TOTAL_TRAINING_STEPS = 300
 LAUNCHER_SCRIPT = "dashboard/launch_experiment.sh"
 SLURM_CONFIGS_DIR = Path("dashboard/slurm_configs")
 
@@ -441,7 +441,8 @@ def submit_eval_job(
     if trajectory_analysis:
         traj_dir = f"{checkpoint_dir}/{project}/{experiment_name}"
         trajectory_flags = f"""\\\n    --trajectory-output-dir {traj_dir} \\
-    --max-samples 30"""
+    --max-samples 30 \\
+    --last-checkpoint-only"""
 
     script = f"""#!/bin/bash
 #SBATCH --job-name=eval-{experiment_name}
