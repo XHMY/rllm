@@ -587,21 +587,13 @@ def analyze_orchestrator_workers(all_data):
 def parse_experiment_key(dirname):
     """Strip step suffix from directory name to get (experiment_key, step_number).
 
-    Supports both new format (step_290) and old format (experiment_step290).
-
     Examples:
         'step_290' -> ('default', 290)
-        'voting-qwen3_1.7b-math_step290' -> ('voting-qwen3_1.7b-math', 290)
         'some_dir_without_step' -> ('some_dir_without_step', None)
     """
-    # New format: step_290 (inside evaluation_trajectories/)
     m = re.search(r'^step_(\d+)$', dirname)
     if m:
         return 'default', int(m.group(1))
-    # Old format: experiment_name_step290
-    m = re.search(r'^(.+?)_step(\d+)$', dirname)
-    if m:
-        return m.group(1), int(m.group(2))
     return dirname, None
 
 
